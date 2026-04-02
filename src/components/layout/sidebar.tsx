@@ -4,13 +4,14 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
-import { LayoutDashboard, Grid3X3, Plus, LogOut } from 'lucide-react';
+import { LayoutDashboard, Grid3X3, Plus, Heart, Bell, Download, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const navItems = [
   { href: '/collection', label: 'Dashboard', icon: LayoutDashboard },
-  { href: '/collection', label: 'Collection', icon: Grid3X3 },
   { href: '/add', label: 'Add Card', icon: Plus },
+  { href: '/wishlist', label: 'Wishlist', icon: Heart },
+  { href: '/alerts', label: 'Price Alerts', icon: Bell },
 ];
 
 export function Sidebar() {
@@ -22,6 +23,10 @@ export function Sidebar() {
     await supabase.auth.signOut();
     router.push('/');
     router.refresh();
+  }
+
+  async function handleExport() {
+    window.open('/api/export', '_blank');
   }
 
   return (
@@ -37,7 +42,7 @@ export function Sidebar() {
 
       <nav className="flex-1 px-3 space-y-1">
         {navItems.map((item) => {
-          const isActive = pathname === item.href;
+          const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
           return (
             <Link
               key={item.label}
@@ -54,6 +59,14 @@ export function Sidebar() {
             </Link>
           );
         })}
+
+        <button
+          onClick={handleExport}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-gray-400 hover:text-white hover:bg-gray-800 w-full"
+        >
+          <Download className="w-5 h-5" />
+          Export CSV
+        </button>
       </nav>
 
       <div className="p-3 border-t border-gray-800">

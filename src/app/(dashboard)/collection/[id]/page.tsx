@@ -6,6 +6,8 @@ import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import Link from 'next/link';
+import { SlabFrame } from '@/components/slab/slab-frame';
+import { PriceHistoryChart } from '@/components/dashboard/price-history-chart';
 import type { PriceRecord, GradingCompany } from '@/types';
 
 const COMPANY_COLORS: Record<GradingCompany, string> = {
@@ -77,33 +79,31 @@ export default async function CardDetailPage({
       </Link>
 
       <div className="grid md:grid-cols-[300px_1fr] gap-8">
-        {/* Card Image */}
-        <div>
-          <div className="aspect-[2/3] bg-gray-800 rounded-xl overflow-hidden border-2 border-gray-700">
-            {card.card_image_url ? (
-              <img
-                src={card.card_image_url}
-                alt={card.card_name}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-600">
-                No Image
-              </div>
-            )}
-          </div>
+        {/* Card Image — Slab View */}
+        <div className="space-y-4">
+          <SlabFrame
+            company={card.grading_company as GradingCompany}
+            grade={card.grade}
+            cardName={card.card_name}
+            cardNumber={card.card_number}
+            setName={card.set_name}
+            imageUrl={card.card_image_url}
+          />
 
-          {/* Cert image/link */}
+          {/* Cert link */}
           {card.cert_image_url && (
             <a
               href={card.cert_image_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-3 flex items-center gap-2 text-sm text-blue-400 hover:underline"
+              className="flex items-center gap-2 text-sm text-blue-400 hover:underline"
             >
               <ExternalLink className="w-3.5 h-3.5" /> View Cert Verification
             </a>
           )}
+
+          {/* Price History Chart */}
+          <PriceHistoryChart cardId={id} />
         </div>
 
         {/* Card Details */}

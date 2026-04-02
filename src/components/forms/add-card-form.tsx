@@ -117,7 +117,7 @@ export function AddCardForm() {
           `/api/pricing/tcgplayer?cardName=${encodeURIComponent(cardName)}&setName=${encodeURIComponent(setName)}&cardNumber=${encodeURIComponent(cardNumber)}`
         ),
         fetch(
-          `/api/pricing/pricecharting?cardName=${encodeURIComponent(cardName)}&setName=${encodeURIComponent(setName)}`
+          `/api/pricing/pricecharting?cardName=${encodeURIComponent(cardName)}&cardNumber=${encodeURIComponent(cardNumber)}&setName=${encodeURIComponent(setName)}`
         ),
       ]);
 

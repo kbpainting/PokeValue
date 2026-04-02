@@ -28,9 +28,58 @@ export interface Card {
   card_image_url: string | null;
   purchase_price: number | null;
   purchase_date: string | null;
+  portfolio_id: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface Portfolio {
+  id: string;
+  user_id: string;
+  name: string;
+  description: string | null;
+  color: string;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface PortfolioSnapshot {
+  id: string;
+  user_id: string;
+  portfolio_id: string | null;
+  snapshot_date: string;
+  total_value: number;
+  total_cards: number;
+  total_cost: number;
+  created_at: string;
+}
+
+export interface WishlistItem {
+  id: string;
+  user_id: string;
+  card_name: string;
+  card_number: string;
+  set_name: string;
+  card_variant: CardVariant | null;
+  grading_company: GradingCompany;
+  target_grade: string | null;
+  card_image_url: string | null;
+  target_price: number | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface PriceAlert {
+  id: string;
+  user_id: string;
+  card_id: string | null;
+  card_name: string;
+  condition_type: 'BELOW' | 'ABOVE';
+  target_price: number;
+  is_triggered: boolean;
+  triggered_at: string | null;
+  created_at: string;
 }
 
 export interface PriceRecord {

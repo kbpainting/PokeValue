@@ -2,19 +2,20 @@ import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { CollectionMetrics } from '@/components/dashboard/collection-metrics';
 import { DashboardCharts } from '@/components/dashboard/charts';
+import { PortfolioChart } from '@/components/dashboard/portfolio-chart';
+import { BiggestMovers } from '@/components/dashboard/biggest-movers';
+import { SetCompletion } from '@/components/dashboard/set-completion';
 import { CardGrid } from '@/components/collection/card-grid';
 import { Separator } from '@/components/ui/separator';
 import type { Card } from '@/types';
 
-export const revalidate = 0; // Always fresh data
+export const revalidate = 0;
 
 export default async function CollectionPage() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-
   if (!user) redirect('/login');
 
-  // Fetch cards and prices in parallel for speed
   const [cardsResult, pricesResult] = await Promise.all([
     supabase
       .from('cards')
@@ -32,39 +33,23 @@ export default async function CollectionPage() {
 
   if (pricesResult.data && cardList.length > 0) {
     const cardIdSet = new Set(cardList.map((c) => c.id));
-
-    // Build best price per card:
-    // Priority: EBAY (graded comps) > PRICECHARTING > TCGPLAYER (raw)
-    const cardPrices: Record<string, { price: number; source: string; time: string }> = {};
+    const cardPrices: Record<string, { price: number; source: string }> = {};
+    const sourcePriority: Record<string, number> = { GOLDIN: 4, EBAY: 3, PRICECHARTING: 2, TCGPLAYER: 1 };
 
     for (const p of pricesResult.data) {
       if (!cardIdSet.has(p.card_id)) continue;
-
       const existing = cardPrices[p.card_id];
-      if (!existing) {
-        // First price we find (already sorted by fetched_at desc = most recent)
-        cardPrices[p.card_id] = { price: p.price, source: p.source, time: p.fetched_at };
-      } else {
-        // Prefer graded comp sources over raw
-        const sourcePriority: Record<string, number> = {
-          EBAY: 3,
-          PRICECHARTING: 2,
-          TCGPLAYER: 1,
-          GOLDIN: 4,
-        };
-        const existingPriority = sourcePriority[existing.source] || 0;
-        const newPriority = sourcePriority[p.source] || 0;
-
-        if (newPriority > existingPriority) {
-          cardPrices[p.card_id] = { price: p.price, source: p.source, time: p.fetched_at };
-        }
+      if (!existing || (sourcePriority[p.source] || 0) > (sourcePriority[existing.source] || 0)) {
+        cardPrices[p.card_id] = { price: p.price, source: p.source };
       }
     }
-
     for (const [cardId, data] of Object.entries(cardPrices)) {
       priceMap[cardId] = data.price;
     }
   }
+
+  const totalValue = Object.values(priceMap).reduce((sum, p) => sum + p, 0);
+  const totalCost = cardList.reduce((sum, c) => sum + (c.purchase_price || 0), 0);
 
   return (
     <div className="space-y-8">
@@ -78,11 +63,20 @@ export default async function CollectionPage() {
       {/* Metrics */}
       <CollectionMetrics cards={cardList} priceMap={priceMap} />
 
-      {/* Charts */}
+      {/* Portfolio value over time */}
+      <PortfolioChart currentValue={totalValue} currentCost={totalCost} currentCards={cardList.length} />
+
+      {/* Biggest Movers */}
+      <BiggestMovers cards={cardList} priceMap={priceMap} />
+
+      {/* Charts + Set Completion */}
       {cardList.length > 0 && (
         <>
           <Separator className="bg-gray-800" />
-          <DashboardCharts cards={cardList} priceMap={priceMap} />
+          <div className="grid lg:grid-cols-[1fr_300px] gap-6">
+            <DashboardCharts cards={cardList} priceMap={priceMap} />
+            <SetCompletion cards={cardList} />
+          </div>
         </>
       )}
 
