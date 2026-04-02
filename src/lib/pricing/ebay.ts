@@ -15,14 +15,14 @@ function cleanTitle(raw: string): string {
 }
 
 /**
- * Checks if an eBay listing title is relevant to the card we searched for.
- * Uses the card name and card number to validate.
+ * Scores how relevant an eBay listing is to the card we searched for.
+ * Returns 0 for irrelevant, higher scores for better matches.
  */
-function isRelevantListing(
+function relevanceScore(
   title: string,
   cardName: string,
   cardNumber: string
-): boolean {
+): number {
   const t = title.toLowerCase();
 
   // Must not be eBay junk
@@ -32,42 +32,49 @@ function isRelevantListing(
     t.length < 10 ||
     t.startsWith('shop on')
   ) {
-    return false;
+    return 0;
   }
 
-  // If we have a card number, the listing MUST contain it
-  // Card numbers like "005", "TG03", "72/100", "#005" etc.
-  if (cardNumber) {
-    const cleanNum = cardNumber.replace(/[/#]/g, '').toLowerCase();
-    // Check for the number with common formats: #005, 005/165, /005, TG03
-    const numPatterns = [
-      cleanNum,
-      `#${cleanNum}`,
-      `/${cleanNum}`,
-      `${cleanNum}/`,
-    ];
-
-    const hasNumber = numPatterns.some((p) => t.includes(p));
-    if (!hasNumber) return false;
-  }
-
-  // Must contain at least part of the Pokemon name (first word)
+  let score = 0;
   const nameWords = cardName.toLowerCase().split(/\s+/);
-  const primaryName = nameWords[0]; // e.g., "Pikachu", "Charizard", "Mewtwo"
-  if (!t.includes(primaryName)) return false;
+  const primaryName = nameWords[0]; // "Pikachu", "Charizard", etc.
 
-  return true;
+  // Must contain the primary Pokemon name
+  if (!t.includes(primaryName)) return 0;
+  score += 10;
+
+  // Bonus for matching additional name words
+  for (let i = 1; i < nameWords.length; i++) {
+    if (nameWords[i].length > 2 && t.includes(nameWords[i])) {
+      score += 5;
+    }
+  }
+
+  // Bonus for matching card number
+  if (cardNumber) {
+    const cleanNum = cardNumber.replace(/^0+/, '').toLowerCase(); // strip leading zeros
+    const rawNum = cardNumber.toLowerCase();
+    if (
+      t.includes(`#${rawNum}`) || t.includes(`#${cleanNum}`) ||
+      t.includes(`/${rawNum}`) || t.includes(`/${cleanNum}`) ||
+      t.includes(`${rawNum}/`) || t.includes(`${cleanNum}/`) ||
+      t.includes(` ${rawNum} `) || t.includes(` ${cleanNum} `) ||
+      t.endsWith(` ${rawNum}`) || t.endsWith(` ${cleanNum}`)
+    ) {
+      score += 20; // Strong signal
+    }
+  }
+
+  return score;
 }
 
 /**
- * Extracts the sold date from eBay listing text.
- * Looks for patterns like "Sold  Mar 28, 2025" or "Mar 28, 2025"
+ * Extracts the sold date from eBay listing elements.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function extractDate(el: any, $: cheerio.CheerioAPI): string {
   const now = new Date().toISOString().split('T')[0];
 
-  // Try dedicated date selectors
   const dateText =
     $(el).find('.s-item__title--tagblock .POSITIVE').text().trim() ||
     $(el).find('.s-item__ended-date').text().trim() ||
@@ -77,7 +84,6 @@ function extractDate(el: any, $: cheerio.CheerioAPI): string {
 
   if (!dateText) return now;
 
-  // Match "Sold  Mar 28, 2025" or just "Mar 28, 2025"
   const dateMatch = dateText.match(
     /(?:Sold\s+)?((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s*\d{2,4})/i
   );
@@ -93,71 +99,75 @@ function extractDate(el: any, $: cheerio.CheerioAPI): string {
 }
 
 /**
- * Scrapes eBay sold/completed listings for EXACT card matches.
- *
- * Search strategy: "{cardName} {cardNumber} {gradingCompany} {grade}"
- * e.g., "Pikachu 005 PSA 10" — then post-filters results to ensure
- * the card number appears in the listing title.
+ * Scrapes eBay sold/completed listings with a timeout.
+ * Uses relevance scoring instead of hard filtering — returns
+ * best matches sorted by relevance.
  */
 export async function getEbaySoldListings(
   cardName: string,
   cardNumber: string,
   gradingCompany: string,
   grade: string | null
-): Promise<SoldListing[]> {
+): Promise<{ listings: SoldListing[]; debug: string }> {
   try {
-    // Build a precise search query using card name + number + grade
     const parts: string[] = [cardName];
-
-    // Always include card number for precision
-    if (cardNumber) {
-      parts.push(cardNumber);
-    }
+    if (cardNumber) parts.push(cardNumber);
 
     if (gradingCompany !== 'RAW' && grade) {
       parts.push(gradingCompany, grade);
     } else if (gradingCompany !== 'RAW') {
       parts.push(gradingCompany);
     } else {
-      // RAW: exclude graded keywords
       parts.push('pokemon card -PSA -CGC -BGS -TAG -graded -slab');
     }
 
     const query = encodeURIComponent(parts.join(' '));
     const url = `https://www.ebay.com/sch/i.html?_nkw=${query}&LH_Complete=1&LH_Sold=1&_sop=13&_ipg=60`;
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache',
-        Pragma: 'no-cache',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Upgrade-Insecure-Requests': '1',
-      },
-      redirect: 'follow',
-    });
+    // 10-second timeout to prevent hanging
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Cache-Control': 'no-cache',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-User': '?1',
+          'Upgrade-Insecure-Requests': '1',
+        },
+        redirect: 'follow',
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
-      console.error('eBay fetch failed:', response.status);
-      return [];
+      return { listings: [], debug: `eBay returned HTTP ${response.status}` };
     }
 
     const html = await response.text();
+
+    // Check for captcha/block pages
+    if (html.includes('captcha') || html.includes('Please verify') || html.includes('robot')) {
+      return { listings: [], debug: 'eBay returned CAPTCHA/block page — server IP is blocked' };
+    }
+
     const $ = cheerio.load(html);
-    const listings: SoldListing[] = [];
+
+    // Collect ALL candidate listings with relevance scores
+    const candidates: { listing: SoldListing; score: number }[] = [];
 
     $('li.s-item, div.s-item').each((_, el) => {
-      if (listings.length >= 15) return; // Collect extra, then take top 10 after filtering
-
-      // Extract title
-      let rawTitle =
+      const rawTitle =
         $(el).find('.s-item__title span[role="heading"]').text().trim() ||
         $(el).find('.s-item__title span').first().text().trim() ||
         $(el).find('.s-item__title').first().text().trim();
@@ -165,9 +175,8 @@ export async function getEbaySoldListings(
       if (!rawTitle) return;
 
       const title = cleanTitle(rawTitle);
-
-      // STRICT RELEVANCE CHECK — must match card name + number
-      if (!isRelevantListing(title, cardName, cardNumber)) return;
+      const score = relevanceScore(title, cardName, cardNumber);
+      if (score === 0) return;
 
       // Extract price
       const priceText =
@@ -180,29 +189,40 @@ export async function getEbaySoldListings(
       const price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
       if (isNaN(price) || price === 0) return;
 
-      // Extract link
       const link =
         $(el).find('a.s-item__link').attr('href') ||
         $(el).find('.s-item__info a').attr('href') ||
         $(el).find('a[href*="ebay.com/itm"]').attr('href') ||
         '';
 
-      // Extract sold date
       const date = extractDate($(el), $);
 
-      listings.push({
-        title,
-        price,
-        date,
-        url: link ? link.split('?')[0] : '',
-        source: 'EBAY',
+      candidates.push({
+        listing: {
+          title,
+          price,
+          date,
+          url: link ? link.split('?')[0] : '',
+          source: 'EBAY',
+        },
+        score,
       });
     });
 
-    return listings.slice(0, 10);
+    // Sort by relevance score (highest first), take top 10
+    candidates.sort((a, b) => b.score - a.score);
+    const listings = candidates.slice(0, 10).map((c) => c.listing);
+
+    const totalItems = $('li.s-item, div.s-item').length;
+    const debug = `Found ${totalItems} eBay items, ${candidates.length} relevant, returning ${listings.length}`;
+
+    return { listings, debug };
   } catch (error) {
-    console.error('eBay scraping error:', error);
-    return [];
+    const msg = error instanceof Error ? error.message : 'Unknown error';
+    if (msg.includes('abort')) {
+      return { listings: [], debug: 'eBay request timed out after 10s' };
+    }
+    return { listings: [], debug: `eBay error: ${msg}` };
   }
 }
 
@@ -211,7 +231,6 @@ export function calculateEbayMarketPrice(listings: SoldListing[]): number | null
 
   const prices = listings.map((l) => l.price).sort((a, b) => a - b);
 
-  // Remove outliers (top and bottom 10% if we have enough data)
   if (prices.length >= 5) {
     const trimCount = Math.max(1, Math.floor(prices.length * 0.1));
     const trimmed = prices.slice(trimCount, prices.length - trimCount);
@@ -220,7 +239,6 @@ export function calculateEbayMarketPrice(listings: SoldListing[]): number | null
     }
   }
 
-  // Median for small datasets
   if (prices.length >= 2) {
     const mid = Math.floor(prices.length / 2);
     return prices.length % 2 === 0

@@ -103,39 +103,41 @@ export function AddCardForm() {
     setSearchResults([]);
   }
 
-  // Fetch pricing from all sources
+  // eBay loading state (separate from others so UI isn't blocked)
+  const [fetchingEbay, setFetchingEbay] = useState(false);
+  const [ebayDebug, setEbayDebug] = useState('');
+
+  // Fetch pricing from all sources INDEPENDENTLY — each updates UI as it resolves
   async function fetchPrices() {
     if (!cardName.trim()) return;
     setFetchingPrices(true);
+    setFetchingEbay(true);
+    setEbayDebug('');
 
-    try {
-      const [ebayRes, tcgRes, pcRes] = await Promise.all([
-        fetch(
-          `/api/pricing/ebay?cardName=${encodeURIComponent(cardName)}&cardNumber=${encodeURIComponent(cardNumber)}&gradingCompany=${gradingCompany}&grade=${grade}`
-        ),
-        fetch(
-          `/api/pricing/tcgplayer?cardName=${encodeURIComponent(cardName)}&setName=${encodeURIComponent(setName)}&cardNumber=${encodeURIComponent(cardNumber)}`
-        ),
-        fetch(
-          `/api/pricing/pricecharting?cardName=${encodeURIComponent(cardName)}&cardNumber=${encodeURIComponent(cardNumber)}&setName=${encodeURIComponent(setName)}`
-        ),
-      ]);
+    // TCGPlayer — usually fastest
+    fetch(`/api/pricing/tcgplayer?cardName=${encodeURIComponent(cardName)}&setName=${encodeURIComponent(setName)}&cardNumber=${encodeURIComponent(cardNumber)}`)
+      .then((res) => res.json())
+      .then((data) => setTcgListings(data.listings || []))
+      .catch(() => {})
+      .finally(() => {});
 
-      const [ebayData, tcgData, pcData] = await Promise.all([
-        ebayRes.json(),
-        tcgRes.json(),
-        pcRes.json(),
-      ]);
+    // PriceCharting
+    fetch(`/api/pricing/pricecharting?cardName=${encodeURIComponent(cardName)}&cardNumber=${encodeURIComponent(cardNumber)}&setName=${encodeURIComponent(setName)}`)
+      .then((res) => res.json())
+      .then((data) => setPcListings(data.listings || []))
+      .catch(() => {})
+      .finally(() => setFetchingPrices(false)); // Mark overall loading done when PC finishes
 
-      setEbayListings(ebayData.listings || []);
-      setEbayMarketPrice(ebayData.marketPrice || null);
-      setTcgListings(tcgData.listings || []);
-      setPcListings(pcData.listings || []);
-    } catch {
-      toast.error('Failed to fetch prices');
-    } finally {
-      setFetchingPrices(false);
-    }
+    // eBay — slowest, may timeout/fail. Runs independently.
+    fetch(`/api/pricing/ebay?cardName=${encodeURIComponent(cardName)}&cardNumber=${encodeURIComponent(cardNumber)}&gradingCompany=${gradingCompany}&grade=${grade}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setEbayListings(data.listings || []);
+        setEbayMarketPrice(data.marketPrice || null);
+        if (data.debug) setEbayDebug(data.debug);
+      })
+      .catch(() => setEbayDebug('eBay request failed — may be blocked from this server'))
+      .finally(() => setFetchingEbay(false));
   }
 
   // Auto-fetch prices when card details change
@@ -435,7 +437,7 @@ export function AddCardForm() {
       </Card>
 
       {/* Live Pricing Preview */}
-      {(ebayListings.length > 0 || tcgListings.length > 0 || pcListings.length > 0) && (
+      {(ebayListings.length > 0 || tcgListings.length > 0 || pcListings.length > 0 || fetchingEbay || fetchingPrices) && (
         <Card className="bg-gray-900 border-gray-800">
           <CardHeader>
             <CardTitle className="text-white flex items-center gap-2">
@@ -445,7 +447,7 @@ export function AddCardForm() {
           </CardHeader>
           <CardContent className="space-y-6">
             {/* GRADED VALUE SECTION */}
-            {(ebayListings.length > 0 || pcListings.length > 0) && (
+            {(ebayListings.length > 0 || pcListings.length > 0 || fetchingEbay) && (
               <div className="space-y-4">
                 <div className="flex items-center gap-2">
                   <div className="h-px flex-1 bg-green-500/30" />
@@ -463,6 +465,22 @@ export function AddCardForm() {
                     <p className="text-gray-400 text-sm">
                       Based on {ebayListings.length} recent {gradingCompany !== 'RAW' ? `${gradingCompany} ${grade}` : 'raw'} sold listings
                     </p>
+                  </div>
+                )}
+
+                {/* eBay loading state */}
+                {fetchingEbay && ebayListings.length === 0 && (
+                  <div className="flex items-center gap-2 text-gray-400 text-sm bg-gray-800 rounded-lg p-3">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Fetching eBay sold comps...
+                  </div>
+                )}
+
+                {/* eBay error/debug info */}
+                {!fetchingEbay && ebayListings.length === 0 && ebayDebug && (
+                  <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3">
+                    <p className="text-yellow-400 text-sm font-medium">eBay comps unavailable</p>
+                    <p className="text-gray-400 text-xs mt-1">{ebayDebug}</p>
                   </div>
                 )}
 
@@ -544,7 +562,7 @@ export function AddCardForm() {
         </Card>
       )}
 
-      {fetchingPrices && (
+      {fetchingPrices && tcgListings.length === 0 && pcListings.length === 0 && (
         <div className="flex items-center gap-2 text-gray-400">
           <Loader2 className="w-4 h-4 animate-spin" />
           Fetching market prices...

@@ -12,8 +12,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'cardName required' }, { status: 400 });
   }
 
-  const listings = await getEbaySoldListings(cardName, cardNumber, gradingCompany, grade);
+  const { listings, debug } = await getEbaySoldListings(cardName, cardNumber, gradingCompany, grade);
   const marketPrice = calculateEbayMarketPrice(listings);
 
-  return NextResponse.json({ listings, marketPrice });
+  return NextResponse.json({ listings, marketPrice, debug });
 }
