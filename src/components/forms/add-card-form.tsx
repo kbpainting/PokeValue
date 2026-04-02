@@ -107,12 +107,22 @@ export function AddCardForm() {
   const [fetchingEbay, setFetchingEbay] = useState(false);
   const [ebayDebug, setEbayDebug] = useState('');
 
+  // All comps require card variant to be selected first
+  const canFetchPrices = cardName.trim().length > 0 && cardVariant !== '';
+
   // Fetch pricing from all sources INDEPENDENTLY — each updates UI as it resolves
   async function fetchPrices() {
-    if (!cardName.trim()) return;
+    if (!canFetchPrices) {
+      toast.error('Please select a Card Variant (Holo, Non-Holo, etc.) before fetching prices');
+      return;
+    }
     setFetchingPrices(true);
     setFetchingEbay(true);
     setEbayDebug('');
+    setEbayListings([]);
+    setTcgListings([]);
+    setPcListings([]);
+    setEbayMarketPrice(null);
 
     // TCGPlayer — usually fastest
     fetch(`/api/pricing/tcgplayer?cardName=${encodeURIComponent(cardName)}&setName=${encodeURIComponent(setName)}&cardNumber=${encodeURIComponent(cardNumber)}`)
@@ -126,27 +136,27 @@ export function AddCardForm() {
       .then((res) => res.json())
       .then((data) => setPcListings(data.listings || []))
       .catch(() => {})
-      .finally(() => setFetchingPrices(false)); // Mark overall loading done when PC finishes
+      .finally(() => setFetchingPrices(false));
 
-    // eBay — slowest, may timeout/fail. Runs independently.
-    fetch(`/api/pricing/ebay?cardName=${encodeURIComponent(cardName)}&cardNumber=${encodeURIComponent(cardNumber)}&gradingCompany=${gradingCompany}&grade=${grade}`)
+    // eBay — includes card variant for precise comps
+    fetch(`/api/pricing/ebay?cardName=${encodeURIComponent(cardName)}&cardNumber=${encodeURIComponent(cardNumber)}&cardVariant=${encodeURIComponent(cardVariant)}&gradingCompany=${gradingCompany}&grade=${grade}`)
       .then((res) => res.json())
       .then((data) => {
         setEbayListings(data.listings || []);
         setEbayMarketPrice(data.marketPrice || null);
         if (data.debug) setEbayDebug(data.debug);
       })
-      .catch(() => setEbayDebug('eBay request failed — may be blocked from this server'))
+      .catch(() => setEbayDebug('eBay request failed'))
       .finally(() => setFetchingEbay(false));
   }
 
-  // Auto-fetch prices when card details change
+  // Auto-fetch prices when card variant, grading company, or grade changes (only if variant is set)
   useEffect(() => {
-    if (selectedCard) {
+    if (selectedCard && cardVariant) {
       fetchPrices();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCard, gradingCompany, grade]);
+  }, [selectedCard, cardVariant, gradingCompany, grade]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -576,7 +586,7 @@ export function AddCardForm() {
           type="button"
           variant="outline"
           onClick={fetchPrices}
-          disabled={fetchingPrices || !cardName.trim()}
+          disabled={fetchingPrices || !canFetchPrices}
           className="border-gray-700"
         >
           {fetchingPrices ? (

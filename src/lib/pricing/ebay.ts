@@ -1,117 +1,155 @@
-import * as cheerio from 'cheerio';
 import type { SoldListing } from '@/types';
 
 /**
- * Cleans eBay listing titles by removing common junk text.
- */
-function cleanTitle(raw: string): string {
-  return raw
-    .replace(/Sponsored/gi, '')
-    .replace(/Opens in a new window or tab/gi, '')
-    .replace(/Brand New/gi, '')
-    .replace(/Free Shipping/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-/**
- * Scores how relevant an eBay listing is to the card we searched for.
- * Returns 0 for irrelevant, higher scores for better matches.
- */
-function relevanceScore(
-  title: string,
-  cardName: string,
-  cardNumber: string
-): number {
-  const t = title.toLowerCase();
-
-  // Must not be eBay junk
-  if (
-    t === 'shop on ebay' ||
-    t === 'results matching fewer words' ||
-    t.length < 10 ||
-    t.startsWith('shop on')
-  ) {
-    return 0;
-  }
-
-  let score = 0;
-  const nameWords = cardName.toLowerCase().split(/\s+/);
-  const primaryName = nameWords[0]; // "Pikachu", "Charizard", etc.
-
-  // Must contain the primary Pokemon name
-  if (!t.includes(primaryName)) return 0;
-  score += 10;
-
-  // Bonus for matching additional name words
-  for (let i = 1; i < nameWords.length; i++) {
-    if (nameWords[i].length > 2 && t.includes(nameWords[i])) {
-      score += 5;
-    }
-  }
-
-  // Bonus for matching card number
-  if (cardNumber) {
-    const cleanNum = cardNumber.replace(/^0+/, '').toLowerCase(); // strip leading zeros
-    const rawNum = cardNumber.toLowerCase();
-    if (
-      t.includes(`#${rawNum}`) || t.includes(`#${cleanNum}`) ||
-      t.includes(`/${rawNum}`) || t.includes(`/${cleanNum}`) ||
-      t.includes(`${rawNum}/`) || t.includes(`${cleanNum}/`) ||
-      t.includes(` ${rawNum} `) || t.includes(` ${cleanNum} `) ||
-      t.endsWith(` ${rawNum}`) || t.endsWith(` ${cleanNum}`)
-    ) {
-      score += 20; // Strong signal
-    }
-  }
-
-  return score;
-}
-
-/**
- * Extracts the sold date from eBay listing elements.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function extractDate(el: any, $: cheerio.CheerioAPI): string {
-  const now = new Date().toISOString().split('T')[0];
-
-  const dateText =
-    $(el).find('.s-item__title--tagblock .POSITIVE').text().trim() ||
-    $(el).find('.s-item__ended-date').text().trim() ||
-    $(el).find('.s-item__endedDate').text().trim() ||
-    $(el).find('.s-item__caption--signal .POSITIVE').text().trim() ||
-    '';
-
-  if (!dateText) return now;
-
-  const dateMatch = dateText.match(
-    /(?:Sold\s+)?((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s*\d{2,4})/i
-  );
-
-  if (dateMatch) {
-    const parsed = new Date(dateMatch[1]);
-    if (!isNaN(parsed.getTime())) {
-      return parsed.toISOString().split('T')[0];
-    }
-  }
-
-  return now;
-}
-
-/**
- * Scrapes eBay sold/completed listings with a timeout.
- * Uses relevance scoring instead of hard filtering — returns
- * best matches sorted by relevance.
+ * Fetches eBay sold/completed listings using ScraperAPI's structured eBay endpoint.
+ * This bypasses eBay's anti-bot blocking by routing through ScraperAPI's proxy network.
+ *
+ * Free tier: 1,000 credits/month (~200 eBay searches at 5 credits each)
+ * Endpoint: https://api.scraperapi.com/structured/ebay/search/v2
+ * Returns structured JSON — no HTML parsing needed.
+ *
+ * Falls back to direct scraping if no API key is configured.
  */
 export async function getEbaySoldListings(
   cardName: string,
   cardNumber: string,
+  cardVariant: string,
+  gradingCompany: string,
+  grade: string | null
+): Promise<{ listings: SoldListing[]; debug: string }> {
+  const apiKey = process.env.SCRAPER_API_KEY;
+
+  if (apiKey) {
+    return getEbayViaScraperAPI(apiKey, cardName, cardNumber, cardVariant, gradingCompany, grade);
+  }
+
+  // No API key — try direct fetch (will likely fail on server IPs)
+  return getEbayDirectScrape(cardName, cardNumber, cardVariant, gradingCompany, grade);
+}
+
+/**
+ * ScraperAPI structured endpoint — returns clean JSON, no parsing needed.
+ */
+async function getEbayViaScraperAPI(
+  apiKey: string,
+  cardName: string,
+  cardNumber: string,
+  cardVariant: string,
   gradingCompany: string,
   grade: string | null
 ): Promise<{ listings: SoldListing[]; debug: string }> {
   try {
+    // Build precise search query
     const parts: string[] = [cardName];
     if (cardNumber) parts.push(cardNumber);
+    if (cardVariant && cardVariant !== 'Other') parts.push(cardVariant);
+
+    if (gradingCompany !== 'RAW' && grade) {
+      parts.push(gradingCompany, grade);
+    } else if (gradingCompany !== 'RAW') {
+      parts.push(gradingCompany);
+    }
+
+    parts.push('pokemon');
+
+    const query = parts.join(' ');
+    const encodedQuery = encodeURIComponent(query);
+
+    const url = `https://api.scraperapi.com/structured/ebay/search/v2?api_key=${apiKey}&query=${encodedQuery}&show_only=sold_items&country_code=us&tld=com`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    let response: Response;
+    try {
+      response = await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      return { listings: [], debug: `ScraperAPI returned HTTP ${response.status}: ${text.substring(0, 100)}` };
+    }
+
+    const data = await response.json();
+    const results = data.results || data.organic_results || [];
+
+    if (results.length === 0) {
+      return { listings: [], debug: `ScraperAPI returned 0 results for "${query}"` };
+    }
+
+    const listings: SoldListing[] = results
+      .filter((item: any) => {
+        // Basic relevance: must contain the Pokemon name
+        const title = (item.title || item.product_title || '').toLowerCase();
+        const primaryName = cardName.toLowerCase().split(/\s+/)[0];
+        return title.includes(primaryName);
+      })
+      .slice(0, 10)
+      .map((item: any) => {
+        // Extract price — ScraperAPI returns various price fields
+        let price = 0;
+        const priceStr = item.price || item.item_price || item.total_price || '';
+        if (typeof priceStr === 'number') {
+          price = priceStr;
+        } else if (typeof priceStr === 'string') {
+          const match = priceStr.replace(/[,$]/g, '').match(/[\d.]+/);
+          if (match) price = parseFloat(match[0]);
+        }
+
+        // Extract date
+        const soldDate = item.sold_date || item.end_date || item.date || '';
+        let date = new Date().toISOString().split('T')[0];
+        if (soldDate) {
+          const parsed = new Date(soldDate);
+          if (!isNaN(parsed.getTime())) {
+            date = parsed.toISOString().split('T')[0];
+          }
+        }
+
+        return {
+          title: (item.title || item.product_title || '').replace(/\s{2,}/g, ' ').trim(),
+          price,
+          date,
+          url: item.url || item.product_url || item.link || '',
+          source: 'EBAY' as const,
+        };
+      })
+      .filter((l: SoldListing) => l.price > 0);
+
+    return {
+      listings,
+      debug: `ScraperAPI: ${results.length} results, ${listings.length} relevant for "${query}"`,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : 'Unknown';
+    if (msg.includes('abort')) {
+      return { listings: [], debug: 'ScraperAPI request timed out after 15s' };
+    }
+    return { listings: [], debug: `ScraperAPI error: ${msg}` };
+  }
+}
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+/**
+ * Direct eBay scraping fallback — works from residential IPs but will likely
+ * get blocked from server IPs (Render, Vercel, etc.)
+ */
+async function getEbayDirectScrape(
+  cardName: string,
+  cardNumber: string,
+  cardVariant: string,
+  gradingCompany: string,
+  grade: string | null
+): Promise<{ listings: SoldListing[]; debug: string }> {
+  try {
+    const cheerio = await import('cheerio');
+
+    const parts: string[] = [cardName];
+    if (cardNumber) parts.push(cardNumber);
+    if (cardVariant && cardVariant !== 'Other') parts.push(cardVariant);
 
     if (gradingCompany !== 'RAW' && grade) {
       parts.push(gradingCompany, grade);
@@ -124,7 +162,6 @@ export async function getEbaySoldListings(
     const query = encodeURIComponent(parts.join(' '));
     const url = `https://www.ebay.com/sch/i.html?_nkw=${query}&LH_Complete=1&LH_Sold=1&_sop=13&_ipg=60`;
 
-    // 10-second timeout to prevent hanging
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
@@ -133,16 +170,9 @@ export async function getEbaySoldListings(
       response = await fetch(url, {
         signal: controller.signal,
         headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9',
-          'Cache-Control': 'no-cache',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Sec-Fetch-User': '?1',
-          'Upgrade-Insecure-Requests': '1',
         },
         redirect: 'follow',
       });
@@ -151,100 +181,69 @@ export async function getEbaySoldListings(
     }
 
     if (!response.ok) {
-      return { listings: [], debug: `eBay returned HTTP ${response.status}` };
+      return { listings: [], debug: `eBay direct: HTTP ${response.status}` };
     }
 
     const html = await response.text();
-
-    // Check for captcha/block pages
     if (html.includes('captcha') || html.includes('Please verify') || html.includes('robot')) {
-      return { listings: [], debug: 'eBay returned CAPTCHA/block page — server IP is blocked' };
+      return { listings: [], debug: 'eBay blocked — CAPTCHA detected. Add SCRAPER_API_KEY env var for reliable results.' };
     }
 
     const $ = cheerio.load(html);
-
-    // Collect ALL candidate listings with relevance scores
-    const candidates: { listing: SoldListing; score: number }[] = [];
+    const listings: SoldListing[] = [];
+    const primaryName = cardName.toLowerCase().split(/\s+/)[0];
 
     $('li.s-item, div.s-item').each((_, el) => {
+      if (listings.length >= 10) return;
+
       const rawTitle =
         $(el).find('.s-item__title span[role="heading"]').text().trim() ||
         $(el).find('.s-item__title span').first().text().trim() ||
         $(el).find('.s-item__title').first().text().trim();
 
-      if (!rawTitle) return;
+      if (!rawTitle || rawTitle.toLowerCase().startsWith('shop on')) return;
 
-      const title = cleanTitle(rawTitle);
-      const score = relevanceScore(title, cardName, cardNumber);
-      if (score === 0) return;
+      const title = rawTitle.replace(/Sponsored/gi, '').replace(/Opens in a new window or tab/gi, '').replace(/\s{2,}/g, ' ').trim();
+      if (!title.toLowerCase().includes(primaryName)) return;
 
-      // Extract price
       const priceText =
         $(el).find('.s-item__price .POSITIVE').text().trim() ||
-        $(el).find('.s-item__price span.POSITIVE').text().trim() ||
         $(el).find('.s-item__price').first().text().trim();
-
       const priceMatch = priceText.match(/\$[\d,]+\.?\d*/);
       if (!priceMatch) return;
       const price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
       if (isNaN(price) || price === 0) return;
 
-      const link =
-        $(el).find('a.s-item__link').attr('href') ||
-        $(el).find('.s-item__info a').attr('href') ||
-        $(el).find('a[href*="ebay.com/itm"]').attr('href') ||
-        '';
+      const link = $(el).find('a.s-item__link').attr('href') || '';
+      const dateText = $(el).find('.s-item__title--tagblock .POSITIVE').text().trim();
+      let date = new Date().toISOString().split('T')[0];
+      if (dateText) {
+        const m = dateText.match(/((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s*\d{2,4})/i);
+        if (m) { const p = new Date(m[1]); if (!isNaN(p.getTime())) date = p.toISOString().split('T')[0]; }
+      }
 
-      const date = extractDate($(el), $);
-
-      candidates.push({
-        listing: {
-          title,
-          price,
-          date,
-          url: link ? link.split('?')[0] : '',
-          source: 'EBAY',
-        },
-        score,
-      });
+      listings.push({ title, price, date, url: link.split('?')[0], source: 'EBAY' });
     });
 
-    // Sort by relevance score (highest first), take top 10
-    candidates.sort((a, b) => b.score - a.score);
-    const listings = candidates.slice(0, 10).map((c) => c.listing);
-
-    const totalItems = $('li.s-item, div.s-item').length;
-    const debug = `Found ${totalItems} eBay items, ${candidates.length} relevant, returning ${listings.length}`;
-
-    return { listings, debug };
+    return { listings, debug: `Direct scrape: ${listings.length} results` };
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Unknown error';
-    if (msg.includes('abort')) {
-      return { listings: [], debug: 'eBay request timed out after 10s' };
-    }
-    return { listings: [], debug: `eBay error: ${msg}` };
+    const msg = error instanceof Error ? error.message : 'Unknown';
+    return { listings: [], debug: msg.includes('abort') ? 'eBay timed out. Add SCRAPER_API_KEY for reliable results.' : `Direct scrape error: ${msg}` };
   }
 }
 
 export function calculateEbayMarketPrice(listings: SoldListing[]): number | null {
   if (listings.length === 0) return null;
-
   const prices = listings.map((l) => l.price).sort((a, b) => a - b);
 
   if (prices.length >= 5) {
-    const trimCount = Math.max(1, Math.floor(prices.length * 0.1));
-    const trimmed = prices.slice(trimCount, prices.length - trimCount);
-    if (trimmed.length > 0) {
-      return trimmed.reduce((sum, p) => sum + p, 0) / trimmed.length;
-    }
+    const trim = Math.max(1, Math.floor(prices.length * 0.1));
+    const trimmed = prices.slice(trim, prices.length - trim);
+    if (trimmed.length > 0) return trimmed.reduce((s, p) => s + p, 0) / trimmed.length;
   }
-
   if (prices.length >= 2) {
     const mid = Math.floor(prices.length / 2);
-    return prices.length % 2 === 0
-      ? (prices[mid - 1] + prices[mid]) / 2
-      : prices[mid];
+    return prices.length % 2 === 0 ? (prices[mid - 1] + prices[mid]) / 2 : prices[mid];
   }
-
   return prices[0];
 }
