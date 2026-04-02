@@ -170,13 +170,13 @@ export function AddCardForm() {
         throw new Error(err.error || 'Failed to add card');
       }
 
-      // Save price history
+      // Save price history to the correct endpoint
       const { card } = await res.json();
       const allListings = [...ebayListings, ...tcgListings, ...pcListings];
       if (allListings.length > 0 && card?.id) {
-        // Store top price records (fire and forget)
-        for (const listing of allListings.slice(0, 30)) {
-          fetch('/api/cards', {
+        // Store price records (fire and forget, use correct endpoint)
+        const savePromises = allListings.slice(0, 30).map((listing) =>
+          fetch('/api/price-history', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -187,8 +187,10 @@ export function AddCardForm() {
               listing_title: listing.title,
               listing_url: listing.url,
             }),
-          }).catch(() => {});
-        }
+          }).catch(() => {})
+        );
+        // Wait for at least some to complete before navigating
+        await Promise.allSettled(savePromises);
       }
 
       toast.success('Card added to collection!');

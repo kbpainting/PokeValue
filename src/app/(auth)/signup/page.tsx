@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { CheckCircle } from 'lucide-react';
 
 export default function SignupPage() {
   const [email, setEmail] = useState('');
@@ -15,6 +16,7 @@ export default function SignupPage() {
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [confirmationSent, setConfirmationSent] = useState(false);
   const router = useRouter();
 
   async function handleSignup(e: React.FormEvent) {
@@ -23,21 +25,65 @@ export default function SignupPage() {
     setError('');
 
     const supabase = createClient();
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: { display_name: displayName },
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
       },
     });
 
     if (error) {
       setError(error.message);
       setLoading(false);
-    } else {
+      return;
+    }
+
+    // Check if email confirmation is required
+    // If user.identities is empty, email confirmation is pending
+    if (data.user && data.user.identities && data.user.identities.length === 0) {
+      setError('An account with this email already exists. Please sign in.');
+      setLoading(false);
+      return;
+    }
+
+    if (data.session) {
+      // No email confirmation required - go straight to collection
       router.push('/collection');
       router.refresh();
+    } else {
+      // Email confirmation required - show confirmation message
+      setConfirmationSent(true);
+      setLoading(false);
     }
+  }
+
+  if (confirmationSent) {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center px-4">
+        <Card className="w-full max-w-md bg-gray-900 border-gray-800">
+          <CardHeader className="text-center">
+            <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
+            <CardTitle className="text-white">Check your email</CardTitle>
+            <CardDescription className="text-gray-400">
+              We sent a confirmation link to <strong className="text-white">{email}</strong>.
+              Click the link in the email to activate your account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p className="text-center text-sm text-gray-400 mb-4">
+              Didn&apos;t receive the email? Check your spam folder.
+            </p>
+            <Link href="/login">
+              <Button variant="outline" className="w-full border-gray-700 text-gray-300">
+                Back to Sign In
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (

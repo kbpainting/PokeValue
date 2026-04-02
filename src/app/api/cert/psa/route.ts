@@ -10,5 +10,12 @@ export async function GET(request: NextRequest) {
   }
 
   const result = await lookupPSACert(certNumber);
-  return NextResponse.json(result);
+
+  // Return in a format the form expects
+  return NextResponse.json({
+    ...result,
+    // The form looks for imageUrl
+    imageUrl: result.imageUrl,
+    verificationUrl: `https://www.psacard.com/cert/${result.certNumber}`,
+  });
 }

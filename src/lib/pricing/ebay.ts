@@ -1,6 +1,11 @@
 import * as cheerio from 'cheerio';
 import type { SoldListing } from '@/types';
 
+/**
+ * Scrapes eBay sold/completed listings.
+ * Uses multiple selector strategies since eBay frequently changes their HTML.
+ * Falls back gracefully if scraping fails.
+ */
 export async function getEbaySoldListings(
   cardName: string,
   gradingCompany: string,
@@ -9,15 +14,26 @@ export async function getEbaySoldListings(
   try {
     const gradeStr = grade && gradingCompany !== 'RAW' ? ` ${gradingCompany} ${grade}` : '';
     const query = encodeURIComponent(`${cardName}${gradeStr} pokemon card`);
+
+    // Use eBay's sold listings search
     const url = `https://www.ebay.com/sch/i.html?_nkw=${query}&LH_Complete=1&LH_Sold=1&_sop=13&_ipg=60`;
 
     const response = await fetch(url, {
       headers: {
         'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
       },
+      redirect: 'follow',
     });
 
     if (!response.ok) {
@@ -29,24 +45,45 @@ export async function getEbaySoldListings(
     const $ = cheerio.load(html);
     const listings: SoldListing[] = [];
 
-    $('li.s-item').each((_, el) => {
-      const title = $(el).find('.s-item__title span').first().text().trim();
-      const priceText = $(el).find('.s-item__price').first().text().trim();
-      const dateText = $(el).find('.s-item__title--tagblock .POSITIVE').text().trim();
-      const link = $(el).find('.s-item__link').attr('href') || '';
+    // Strategy 1: Standard s-item selectors
+    $('li.s-item, div.s-item').each((_, el) => {
+      if (listings.length >= 10) return;
 
-      if (!title || title === 'Shop on eBay') return;
+      // Try multiple title selectors
+      let title =
+        $(el).find('.s-item__title span[role="heading"]').text().trim() ||
+        $(el).find('.s-item__title span').first().text().trim() ||
+        $(el).find('.s-item__title').first().text().trim();
 
-      // Parse price - handle "to" ranges by taking the first price
+      if (!title || title === 'Shop on eBay' || title === 'Results matching fewer words') return;
+
+      // Try multiple price selectors
+      const priceText =
+        $(el).find('.s-item__price .POSITIVE').text().trim() ||
+        $(el).find('.s-item__price span.POSITIVE').text().trim() ||
+        $(el).find('.s-item__price').first().text().trim();
+
       const priceMatch = priceText.match(/\$[\d,]+\.?\d*/);
       if (!priceMatch) return;
       const price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
       if (isNaN(price) || price === 0) return;
 
-      // Parse date
+      // Try multiple link selectors
+      const link =
+        $(el).find('a.s-item__link').attr('href') ||
+        $(el).find('.s-item__info a').attr('href') ||
+        $(el).find('a[href*="ebay.com/itm"]').attr('href') ||
+        '';
+
+      // Parse date from various formats
       let date = new Date().toISOString().split('T')[0];
+      const dateText =
+        $(el).find('.s-item__title--tagblock .POSITIVE').text().trim() ||
+        $(el).find('.s-item__ended-date').text().trim() ||
+        $(el).find('.s-item__endedDate').text().trim();
+
       if (dateText) {
-        const dateMatch = dateText.match(/([\w]+\s+\d+,?\s*\d*)/);
+        const dateMatch = dateText.match(/((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s*\d{0,4})/i);
         if (dateMatch) {
           const parsed = new Date(dateMatch[1]);
           if (!isNaN(parsed.getTime())) {
@@ -56,13 +93,40 @@ export async function getEbaySoldListings(
       }
 
       listings.push({
-        title,
+        title: title.substring(0, 200),
         price,
         date,
-        url: link.split('?')[0],
+        url: link ? link.split('?')[0] : '',
         source: 'EBAY',
       });
     });
+
+    // Strategy 2: If strategy 1 found nothing, try srp-results structure
+    if (listings.length === 0) {
+      $('[data-viewport]').each((_, el) => {
+        if (listings.length >= 10) return;
+
+        const title = $(el).find('[role="heading"]').text().trim();
+        if (!title) return;
+
+        const priceText = $(el).text();
+        const priceMatch = priceText.match(/\$[\d,]+\.?\d*/);
+        if (!priceMatch) return;
+
+        const price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
+        if (isNaN(price) || price === 0 || price > 100000) return;
+
+        const link = $(el).find('a[href*="ebay.com/itm"]').attr('href') || '';
+
+        listings.push({
+          title: title.substring(0, 200),
+          price,
+          date: new Date().toISOString().split('T')[0],
+          url: link ? link.split('?')[0] : '',
+          source: 'EBAY',
+        });
+      });
+    }
 
     return listings.slice(0, 10);
   } catch (error) {
@@ -78,10 +142,20 @@ export function calculateEbayMarketPrice(listings: SoldListing[]): number | null
 
   // Remove outliers (top and bottom 10% if we have enough data)
   if (prices.length >= 5) {
-    const trimCount = Math.floor(prices.length * 0.1);
+    const trimCount = Math.max(1, Math.floor(prices.length * 0.1));
     const trimmed = prices.slice(trimCount, prices.length - trimCount);
-    return trimmed.reduce((sum, p) => sum + p, 0) / trimmed.length;
+    if (trimmed.length > 0) {
+      return trimmed.reduce((sum, p) => sum + p, 0) / trimmed.length;
+    }
   }
 
-  return prices.reduce((sum, p) => sum + p, 0) / prices.length;
+  // Median for small datasets
+  if (prices.length >= 2) {
+    const mid = Math.floor(prices.length / 2);
+    return prices.length % 2 === 0
+      ? (prices[mid - 1] + prices[mid]) / 2
+      : prices[mid];
+  }
+
+  return prices[0];
 }
