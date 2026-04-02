@@ -33,6 +33,7 @@ interface TCGSearchResult {
   set: string;
   image: string;
   imageLarge: string;
+  rarity: string;
 }
 
 export function AddCardForm() {
@@ -252,25 +253,31 @@ export function AddCardForm() {
           </div>
 
           {searchResults.length > 0 && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-h-80 overflow-y-auto">
-              {searchResults.slice(0, 12).map((card) => (
-                <button
-                  key={card.id}
-                  type="button"
-                  onClick={() => selectCard(card)}
-                  className="bg-gray-800 rounded-lg p-2 border border-gray-700 hover:border-yellow-500 transition-colors text-left"
-                >
-                  {card.image && (
-                    <img
-                      src={card.image}
-                      alt={card.name}
-                      className="w-full rounded mb-2"
-                    />
-                  )}
-                  <p className="text-xs text-white font-medium truncate">{card.name}</p>
-                  <p className="text-xs text-gray-400">{card.set} #{card.number}</p>
-                </button>
-              ))}
+            <div>
+              <p className="text-xs text-gray-500 mb-2">{searchResults.length} results found — select your card:</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 max-h-[500px] overflow-y-auto">
+                {searchResults.slice(0, 30).map((card) => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    onClick={() => selectCard(card)}
+                    className="bg-gray-800 rounded-lg p-2 border border-gray-700 hover:border-yellow-500 transition-colors text-left"
+                  >
+                    {card.image && (
+                      <img
+                        src={card.image}
+                        alt={card.name}
+                        loading="lazy"
+                        decoding="async"
+                        className="w-full rounded mb-2"
+                      />
+                    )}
+                    <p className="text-xs text-white font-medium truncate">{card.name}</p>
+                    <p className="text-xs text-gray-400 truncate">{card.set}</p>
+                    <p className="text-[10px] text-gray-500">#{card.number}{card.rarity ? ` · ${card.rarity}` : ''}</p>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 

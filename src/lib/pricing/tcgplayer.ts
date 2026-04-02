@@ -10,10 +10,102 @@ interface TCGPriceData {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/**
+ * Smart card search that handles natural queries like:
+ *   "Pikachu 005"          → name:Pikachu number:005
+ *   "Pikachu Celebrations"  → name:Pikachu set.name:Celebrations
+ *   "Pikachu 005 Celebrations" → name:Pikachu number:005 set.name:Celebrations
+ *   "Charizard VMAX"       → name:"Charizard VMAX"
+ *   "Mewtwo 72"            → name:Mewtwo number:72
+ */
 export async function searchCards(query: string) {
   try {
-    const results = await PokemonTCG.findCardsByQueries({ q: `name:"${query}"` });
-    return (results as any[]).map((card: any) => ({
+    const parts = query.trim().split(/\s+/);
+    const qParts: string[] = [];
+
+    // Known set names for matching (common ones)
+    const knownSets = [
+      'celebrations', 'evolving skies', 'brilliant stars', 'astral radiance',
+      'lost origin', 'silver tempest', 'crown zenith', 'scarlet & violet',
+      'paldea evolved', 'obsidian flames', '151', 'paradox rift',
+      'temporal forces', 'twilight masquerade', 'shrouded fable',
+      'stellar crown', 'surging sparks', 'prismatic evolutions',
+      'journey together', 'base set', 'jungle', 'fossil', 'team rocket',
+      'vivid voltage', 'shining fates', 'chilling reign', 'fusion strike',
+      'darkness ablaze', 'rebel clash', 'sword & shield', 'sun & moon',
+      'burning shadows', 'guardians rising', 'steam siege', 'evolutions',
+      'breakpoint', 'generations', 'ancient origins', 'roaring skies',
+      'phantom forces', 'flashfire', 'xy', 'boundaries crossed',
+      'plasma storm', 'plasma freeze', 'legendary treasures',
+    ];
+
+    let nameParts: string[] = [];
+    let numberPart: string | null = null;
+    let setPart: string | null = null;
+
+    // Parse the query: separate name, number, and set
+    const lowerQuery = query.toLowerCase();
+    for (const setName of knownSets) {
+      if (lowerQuery.includes(setName)) {
+        setPart = setName;
+        // Remove set name from parts to process
+        const setRegex = new RegExp(setName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        const remaining = query.replace(setRegex, '').trim();
+        const remainingParts = remaining.split(/\s+/).filter(Boolean);
+        for (const p of remainingParts) {
+          if (/^\d{1,4}$/.test(p) || /^[A-Z]{0,3}\d{1,4}$/i.test(p) || /^\d+\/\d+$/.test(p)) {
+            numberPart = p;
+          } else if (p.length > 0) {
+            nameParts.push(p);
+          }
+        }
+        break;
+      }
+    }
+
+    // If no set was found, parse normally
+    if (!setPart) {
+      for (const p of parts) {
+        // Check if this looks like a card number: "005", "72", "TG03", "12/100"
+        if (/^\d{1,4}$/.test(p) || /^[A-Z]{1,3}\d{1,4}$/i.test(p) || /^\d+\/\d+$/.test(p)) {
+          numberPart = p;
+        } else {
+          nameParts.push(p);
+        }
+      }
+    }
+
+    // Build the API query
+    if (nameParts.length > 0) {
+      const name = nameParts.join(' ');
+      qParts.push(`name:"${name}"`);
+    }
+    if (numberPart) {
+      // Strip leading zeros for matching but also try with them
+      qParts.push(`number:${numberPart}`);
+    }
+    if (setPart) {
+      qParts.push(`set.name:"${setPart}"`);
+    }
+
+    // If we only got a number with no name, that's not useful
+    if (nameParts.length === 0) {
+      qParts.length = 0;
+      qParts.push(`name:"${query}"`);
+    }
+
+    const q = qParts.join(' ');
+    console.log('[TCG Search]', query, '→', q);
+
+    let results: any[] = await PokemonTCG.findCardsByQueries({ q, pageSize: 50 });
+
+    // If exact number match found nothing, retry with just name (broader search)
+    if (results.length === 0 && numberPart && nameParts.length > 0) {
+      const fallbackQ = `name:"${nameParts.join(' ')}"`;
+      results = await PokemonTCG.findCardsByQueries({ q: fallbackQ, pageSize: 50 });
+    }
+
+    return results.map((card: any) => ({
       id: card.id,
       name: card.name,
       number: card.number,
@@ -21,6 +113,7 @@ export async function searchCards(query: string) {
       setId: card.set?.id || '',
       image: card.images?.small || '',
       imageLarge: card.images?.large || '',
+      rarity: card.rarity || '',
       tcgplayerPrices: card.tcgplayer?.prices as Record<string, TCGPriceData> | undefined,
       tcgplayerUrl: card.tcgplayer?.url || '',
     }));
