@@ -20,7 +20,9 @@ import { Loader2, Search, DollarSign } from 'lucide-react';
 import {
   GRADING_COMPANIES,
   GRADES,
+  CARD_VARIANTS,
   type GradingCompany,
+  type CardVariant,
   type SoldListing,
 } from '@/types';
 
@@ -45,6 +47,7 @@ export function AddCardForm() {
   const [cardName, setCardName] = useState('');
   const [cardNumber, setCardNumber] = useState('');
   const [setName, setSetName] = useState('');
+  const [cardVariant, setCardVariant] = useState<CardVariant | ''>('');
   const [certNumber, setCertNumber] = useState('');
   const [purchasePrice, setPurchasePrice] = useState('');
   const [purchaseDate, setPurchaseDate] = useState('');
@@ -107,7 +110,7 @@ export function AddCardForm() {
     try {
       const [ebayRes, tcgRes, pcRes] = await Promise.all([
         fetch(
-          `/api/pricing/ebay?cardName=${encodeURIComponent(cardName)}&gradingCompany=${gradingCompany}&grade=${grade}`
+          `/api/pricing/ebay?cardName=${encodeURIComponent(cardName)}&cardNumber=${encodeURIComponent(cardNumber)}&gradingCompany=${gradingCompany}&grade=${grade}`
         ),
         fetch(
           `/api/pricing/tcgplayer?cardName=${encodeURIComponent(cardName)}&setName=${encodeURIComponent(setName)}&cardNumber=${encodeURIComponent(cardNumber)}`
@@ -170,6 +173,7 @@ export function AddCardForm() {
           card_name: cardName,
           card_number: cardNumber,
           set_name: setName,
+          card_variant: cardVariant || null,
           grading_company: gradingCompany,
           grade: gradingCompany === 'RAW' ? null : grade,
           cert_number: certNumber || null,
@@ -360,6 +364,22 @@ export function AddCardForm() {
                 className="bg-gray-800 border-gray-700 text-white"
               />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-gray-300">Card Variant</Label>
+            <Select value={cardVariant} onValueChange={(v) => setCardVariant((v ?? '') as CardVariant | '')}>
+              <SelectTrigger className="bg-gray-800 border-gray-700 text-white">
+                <SelectValue placeholder="Select variant (Holo, Non-Holo, etc.)" />
+              </SelectTrigger>
+              <SelectContent>
+                {CARD_VARIANTS.map((v) => (
+                  <SelectItem key={v.value} value={v.value}>
+                    {v.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {gradingCompany !== 'RAW' && (

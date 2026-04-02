@@ -2,32 +2,128 @@ import * as cheerio from 'cheerio';
 import type { SoldListing } from '@/types';
 
 /**
- * Scrapes eBay sold/completed listings for GRADED slabs.
- * Searches for exact grading company + grade comps (e.g., "Charizard PSA 10").
- * For RAW cards, searches without grading terms.
- * Uses multiple selector strategies since eBay frequently changes their HTML.
+ * Cleans eBay listing titles by removing common junk text.
+ */
+function cleanTitle(raw: string): string {
+  return raw
+    .replace(/Sponsored/gi, '')
+    .replace(/Opens in a new window or tab/gi, '')
+    .replace(/Brand New/gi, '')
+    .replace(/Free Shipping/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+/**
+ * Checks if an eBay listing title is relevant to the card we searched for.
+ * Uses the card name and card number to validate.
+ */
+function isRelevantListing(
+  title: string,
+  cardName: string,
+  cardNumber: string
+): boolean {
+  const t = title.toLowerCase();
+
+  // Must not be eBay junk
+  if (
+    t === 'shop on ebay' ||
+    t === 'results matching fewer words' ||
+    t.length < 10 ||
+    t.startsWith('shop on')
+  ) {
+    return false;
+  }
+
+  // If we have a card number, the listing MUST contain it
+  // Card numbers like "005", "TG03", "72/100", "#005" etc.
+  if (cardNumber) {
+    const cleanNum = cardNumber.replace(/[/#]/g, '').toLowerCase();
+    // Check for the number with common formats: #005, 005/165, /005, TG03
+    const numPatterns = [
+      cleanNum,
+      `#${cleanNum}`,
+      `/${cleanNum}`,
+      `${cleanNum}/`,
+    ];
+
+    const hasNumber = numPatterns.some((p) => t.includes(p));
+    if (!hasNumber) return false;
+  }
+
+  // Must contain at least part of the Pokemon name (first word)
+  const nameWords = cardName.toLowerCase().split(/\s+/);
+  const primaryName = nameWords[0]; // e.g., "Pikachu", "Charizard", "Mewtwo"
+  if (!t.includes(primaryName)) return false;
+
+  return true;
+}
+
+/**
+ * Extracts the sold date from eBay listing text.
+ * Looks for patterns like "Sold  Mar 28, 2025" or "Mar 28, 2025"
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractDate(el: any, $: cheerio.CheerioAPI): string {
+  const now = new Date().toISOString().split('T')[0];
+
+  // Try dedicated date selectors
+  const dateText =
+    $(el).find('.s-item__title--tagblock .POSITIVE').text().trim() ||
+    $(el).find('.s-item__ended-date').text().trim() ||
+    $(el).find('.s-item__endedDate').text().trim() ||
+    $(el).find('.s-item__caption--signal .POSITIVE').text().trim() ||
+    '';
+
+  if (!dateText) return now;
+
+  // Match "Sold  Mar 28, 2025" or just "Mar 28, 2025"
+  const dateMatch = dateText.match(
+    /(?:Sold\s+)?((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s*\d{2,4})/i
+  );
+
+  if (dateMatch) {
+    const parsed = new Date(dateMatch[1]);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString().split('T')[0];
+    }
+  }
+
+  return now;
+}
+
+/**
+ * Scrapes eBay sold/completed listings for EXACT card matches.
+ *
+ * Search strategy: "{cardName} {cardNumber} {gradingCompany} {grade}"
+ * e.g., "Pikachu 005 PSA 10" — then post-filters results to ensure
+ * the card number appears in the listing title.
  */
 export async function getEbaySoldListings(
   cardName: string,
+  cardNumber: string,
   gradingCompany: string,
   grade: string | null
 ): Promise<SoldListing[]> {
   try {
-    // Build search query — for graded cards, include exact company + grade for precise comps
-    let searchTerms: string;
-    if (gradingCompany !== 'RAW' && grade) {
-      // Search for exact graded slab comps: "Charizard VMAX PSA 10 pokemon"
-      searchTerms = `${cardName} ${gradingCompany} ${grade} pokemon`;
-    } else if (gradingCompany !== 'RAW') {
-      // Graded but no specific grade selected: "Charizard VMAX PSA pokemon"
-      searchTerms = `${cardName} ${gradingCompany} pokemon`;
-    } else {
-      // RAW: search without grading terms, exclude graded keywords
-      searchTerms = `${cardName} pokemon card -PSA -CGC -BGS -TAG -graded -slab`;
-    }
-    const query = encodeURIComponent(searchTerms);
+    // Build a precise search query using card name + number + grade
+    const parts: string[] = [cardName];
 
-    // Use eBay's sold listings search
+    // Always include card number for precision
+    if (cardNumber) {
+      parts.push(cardNumber);
+    }
+
+    if (gradingCompany !== 'RAW' && grade) {
+      parts.push(gradingCompany, grade);
+    } else if (gradingCompany !== 'RAW') {
+      parts.push(gradingCompany);
+    } else {
+      // RAW: exclude graded keywords
+      parts.push('pokemon card -PSA -CGC -BGS -TAG -graded -slab');
+    }
+
+    const query = encodeURIComponent(parts.join(' '));
     const url = `https://www.ebay.com/sch/i.html?_nkw=${query}&LH_Complete=1&LH_Sold=1&_sop=13&_ipg=60`;
 
     const response = await fetch(url, {
@@ -57,19 +153,23 @@ export async function getEbaySoldListings(
     const $ = cheerio.load(html);
     const listings: SoldListing[] = [];
 
-    // Strategy 1: Standard s-item selectors
     $('li.s-item, div.s-item').each((_, el) => {
-      if (listings.length >= 10) return;
+      if (listings.length >= 15) return; // Collect extra, then take top 10 after filtering
 
-      // Try multiple title selectors
-      let title =
+      // Extract title
+      let rawTitle =
         $(el).find('.s-item__title span[role="heading"]').text().trim() ||
         $(el).find('.s-item__title span').first().text().trim() ||
         $(el).find('.s-item__title').first().text().trim();
 
-      if (!title || title === 'Shop on eBay' || title === 'Results matching fewer words') return;
+      if (!rawTitle) return;
 
-      // Try multiple price selectors
+      const title = cleanTitle(rawTitle);
+
+      // STRICT RELEVANCE CHECK — must match card name + number
+      if (!isRelevantListing(title, cardName, cardNumber)) return;
+
+      // Extract price
       const priceText =
         $(el).find('.s-item__price .POSITIVE').text().trim() ||
         $(el).find('.s-item__price span.POSITIVE').text().trim() ||
@@ -80,65 +180,24 @@ export async function getEbaySoldListings(
       const price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
       if (isNaN(price) || price === 0) return;
 
-      // Try multiple link selectors
+      // Extract link
       const link =
         $(el).find('a.s-item__link').attr('href') ||
         $(el).find('.s-item__info a').attr('href') ||
         $(el).find('a[href*="ebay.com/itm"]').attr('href') ||
         '';
 
-      // Parse date from various formats
-      let date = new Date().toISOString().split('T')[0];
-      const dateText =
-        $(el).find('.s-item__title--tagblock .POSITIVE').text().trim() ||
-        $(el).find('.s-item__ended-date').text().trim() ||
-        $(el).find('.s-item__endedDate').text().trim();
-
-      if (dateText) {
-        const dateMatch = dateText.match(/((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+\d{1,2},?\s*\d{0,4})/i);
-        if (dateMatch) {
-          const parsed = new Date(dateMatch[1]);
-          if (!isNaN(parsed.getTime())) {
-            date = parsed.toISOString().split('T')[0];
-          }
-        }
-      }
+      // Extract sold date
+      const date = extractDate($(el), $);
 
       listings.push({
-        title: title.substring(0, 200),
+        title,
         price,
         date,
         url: link ? link.split('?')[0] : '',
         source: 'EBAY',
       });
     });
-
-    // Strategy 2: If strategy 1 found nothing, try srp-results structure
-    if (listings.length === 0) {
-      $('[data-viewport]').each((_, el) => {
-        if (listings.length >= 10) return;
-
-        const title = $(el).find('[role="heading"]').text().trim();
-        if (!title) return;
-
-        const priceText = $(el).text();
-        const priceMatch = priceText.match(/\$[\d,]+\.?\d*/);
-        if (!priceMatch) return;
-
-        const price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
-        if (isNaN(price) || price === 0 || price > 100000) return;
-
-        const link = $(el).find('a[href*="ebay.com/itm"]').attr('href') || '';
-
-        listings.push({
-          title: title.substring(0, 200),
-          price,
-          date: new Date().toISOString().split('T')[0],
-          url: link ? link.split('?')[0] : '',
-          source: 'EBAY',
-        });
-      });
-    }
 
     return listings.slice(0, 10);
   } catch (error) {

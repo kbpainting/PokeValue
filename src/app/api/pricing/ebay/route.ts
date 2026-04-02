@@ -4,6 +4,7 @@ import { getEbaySoldListings, calculateEbayMarketPrice } from '@/lib/pricing/eba
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const cardName = searchParams.get('cardName');
+  const cardNumber = searchParams.get('cardNumber') || '';
   const gradingCompany = searchParams.get('gradingCompany') || 'RAW';
   const grade = searchParams.get('grade');
 
@@ -11,7 +12,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'cardName required' }, { status: 400 });
   }
 
-  const listings = await getEbaySoldListings(cardName, gradingCompany, grade);
+  const listings = await getEbaySoldListings(cardName, cardNumber, gradingCompany, grade);
   const marketPrice = calculateEbayMarketPrice(listings);
 
   return NextResponse.json({ listings, marketPrice });

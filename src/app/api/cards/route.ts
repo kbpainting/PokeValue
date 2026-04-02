@@ -39,6 +39,7 @@ export async function POST(request: NextRequest) {
       card_name: body.card_name,
       card_number: body.card_number,
       set_name: body.set_name || '',
+      card_variant: body.card_variant || null,
       grading_company: body.grading_company,
       grade: body.grade || null,
       cert_number: body.cert_number || null,

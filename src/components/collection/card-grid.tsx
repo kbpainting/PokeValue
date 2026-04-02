@@ -260,6 +260,7 @@ export function CardGrid({ cards, priceMap = {} }: CardGridProps) {
                   <p className="text-white text-sm font-medium truncate">{card.card_name}</p>
                   <p className="text-gray-400 text-xs truncate">
                     {card.set_name} #{card.card_number}
+                    {card.card_variant && ` · ${card.card_variant}`}
                   </p>
                   {card.cert_number && (
                     <p className="text-gray-500 text-[10px] font-mono mt-0.5">

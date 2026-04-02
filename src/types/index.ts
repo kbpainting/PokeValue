@@ -2,12 +2,25 @@ export type GradingCompany = 'PSA' | 'CGC' | 'BGS' | 'TAG' | 'RAW';
 
 export type PriceSource = 'TCGPLAYER' | 'EBAY' | 'PRICECHARTING' | 'GOLDIN';
 
+export type CardVariant = 'Holo' | 'Non-Holo' | 'Reverse Holo' | 'Full Art' | 'Alt Art' | 'Secret Rare' | 'Other';
+
+export const CARD_VARIANTS: { value: CardVariant; label: string }[] = [
+  { value: 'Holo', label: 'Holo' },
+  { value: 'Non-Holo', label: 'Non-Holo' },
+  { value: 'Reverse Holo', label: 'Reverse Holo' },
+  { value: 'Full Art', label: 'Full Art' },
+  { value: 'Alt Art', label: 'Alt Art' },
+  { value: 'Secret Rare', label: 'Secret Rare' },
+  { value: 'Other', label: 'Other' },
+];
+
 export interface Card {
   id: string;
   user_id: string;
   card_name: string;
   card_number: string;
   set_name: string;
+  card_variant: CardVariant | null;
   grading_company: GradingCompany;
   grade: string | null;
   cert_number: string | null;
