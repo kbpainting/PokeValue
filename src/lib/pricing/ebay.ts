@@ -78,52 +78,85 @@ async function getEbayViaStructuredAPI(
 
     const data = await response.json();
 
-    // ScraperAPI structured endpoint returns { organic_results: [...] } or { results: [...] }
-    const results = data.organic_results || data.results || data.sold_items || [];
+    // ScraperAPI can return results in multiple formats:
+    // - Array at top level: [item0, item1, ...] (keys are 0, 1, 2...)
+    // - Object with results: { organic_results: [...] } or { results: [...] }
+    let results: any[];
+    if (Array.isArray(data)) {
+      results = data;
+    } else {
+      results = data.organic_results || data.results || data.sold_items || data.items || [];
+    }
 
     if (!Array.isArray(results) || results.length === 0) {
-      // Log the response shape for debugging
-      const keys = Object.keys(data).join(', ');
+      const keys = Object.keys(data).slice(0, 10).join(', ');
       return { listings: [], debug: `ScraperAPI returned 0 sold results. Response keys: ${keys}. Query: "${searchQuery}"` };
     }
 
     const primaryName = cardName.toLowerCase().split(/\s+/)[0];
 
+    // Debug: log first item's keys and sample values so we can see the response shape
+    const sampleItem = results[0] || {};
+    const sampleKeys = Object.keys(sampleItem).slice(0, 15).join(', ');
+    const sampleTitle = sampleItem.title || sampleItem.name || sampleItem.product_title || sampleItem.heading || JSON.stringify(sampleItem).substring(0, 100);
+
     const listings: SoldListing[] = results
       .filter((item: any) => {
-        const title = (item.title || item.name || '').toLowerCase();
+        // Try every possible title field
+        const title = (item.title || item.name || item.product_title || item.heading || '').toLowerCase();
         return title.includes(primaryName);
       })
       .slice(0, 10)
       .map((item: any) => {
-        // Parse price from various ScraperAPI response formats
+        // Extract price — try every possible field format
         let price = 0;
-        const rawPrice = item.price || item.sold_price || item.total_price || item.item_price || '';
-        if (typeof rawPrice === 'number') {
-          price = rawPrice;
-        } else if (typeof rawPrice === 'string') {
-          const match = rawPrice.replace(/[,$]/g, '').match(/[\d.]+/);
-          if (match) price = parseFloat(match[0]);
+        // Direct numeric fields
+        for (const key of ['price', 'sold_price', 'total_price', 'item_price', 'current_price', 'amount']) {
+          const val = item[key];
+          if (typeof val === 'number' && val > 0) { price = val; break; }
+          if (typeof val === 'string') {
+            const m = val.replace(/[,$]/g, '').match(/[\d.]+/);
+            if (m) { price = parseFloat(m[0]); if (price > 0) break; }
+          }
         }
-        // Also check nested price object
-        if (price === 0 && item.price_info) {
-          const pi = item.price_info;
-          price = pi.amount || pi.value || pi.total || 0;
+        // Nested price objects
+        if (price === 0) {
+          const nested = item.price_info || item.pricing || item.sold_for || {};
+          if (typeof nested === 'object') {
+            const rawVal = nested.amount || nested.value || nested.total || nested.raw || 0;
+            if (typeof rawVal === 'string') {
+              const m = rawVal.replace(/[,$]/g, '').match(/[\d.]+/);
+              price = m ? parseFloat(m[0]) : 0;
+            } else if (typeof rawVal === 'number') {
+              price = rawVal;
+            }
+          }
+        }
+        // Worst case: scan entire item JSON for a dollar amount
+        if (price === 0) {
+          const json = JSON.stringify(item);
+          const priceMatches = json.match(/\$[\d,]+\.?\d*/g);
+          if (priceMatches && priceMatches.length > 0) {
+            price = parseFloat(priceMatches[0].replace(/[$,]/g, ''));
+          }
         }
 
-        // Parse date
+        // Extract date
         let date = new Date().toISOString().split('T')[0];
-        const soldDate = item.sold_date || item.date_sold || item.end_date || '';
+        const soldDate = item.sold_date || item.date_sold || item.end_date || item.date || item.sold || '';
         if (soldDate) {
           const parsed = new Date(soldDate);
           if (!isNaN(parsed.getTime())) date = parsed.toISOString().split('T')[0];
         }
 
+        const title = (item.title || item.name || item.product_title || item.heading || '')
+          .replace(/\s{2,}/g, ' ').trim().substring(0, 200);
+
         return {
-          title: (item.title || item.name || '').replace(/\s{2,}/g, ' ').trim().substring(0, 200),
+          title,
           price,
           date,
-          url: item.link || item.url || item.product_url || '',
+          url: item.link || item.url || item.product_url || item.href || '',
           source: 'EBAY' as const,
         };
       })
@@ -131,7 +164,9 @@ async function getEbayViaStructuredAPI(
 
     return {
       listings,
-      debug: `ScraperAPI: ${results.length} total, ${listings.length} matched for "${searchQuery}"`,
+      debug: listings.length > 0
+        ? `ScraperAPI: ${results.length} results, ${listings.length} matched`
+        : `ScraperAPI: ${results.length} results, 0 matched. Item keys: [${sampleKeys}]. Sample: ${sampleTitle}`,
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Unknown';
