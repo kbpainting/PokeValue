@@ -2,9 +2,10 @@ import * as cheerio from 'cheerio';
 import type { SoldListing } from '@/types';
 
 /**
- * Scrapes eBay sold/completed listings.
+ * Scrapes eBay sold/completed listings for GRADED slabs.
+ * Searches for exact grading company + grade comps (e.g., "Charizard PSA 10").
+ * For RAW cards, searches without grading terms.
  * Uses multiple selector strategies since eBay frequently changes their HTML.
- * Falls back gracefully if scraping fails.
  */
 export async function getEbaySoldListings(
   cardName: string,
@@ -12,8 +13,19 @@ export async function getEbaySoldListings(
   grade: string | null
 ): Promise<SoldListing[]> {
   try {
-    const gradeStr = grade && gradingCompany !== 'RAW' ? ` ${gradingCompany} ${grade}` : '';
-    const query = encodeURIComponent(`${cardName}${gradeStr} pokemon card`);
+    // Build search query — for graded cards, include exact company + grade for precise comps
+    let searchTerms: string;
+    if (gradingCompany !== 'RAW' && grade) {
+      // Search for exact graded slab comps: "Charizard VMAX PSA 10 pokemon"
+      searchTerms = `${cardName} ${gradingCompany} ${grade} pokemon`;
+    } else if (gradingCompany !== 'RAW') {
+      // Graded but no specific grade selected: "Charizard VMAX PSA pokemon"
+      searchTerms = `${cardName} ${gradingCompany} pokemon`;
+    } else {
+      // RAW: search without grading terms, exclude graded keywords
+      searchTerms = `${cardName} pokemon card -PSA -CGC -BGS -TAG -graded -slab`;
+    }
+    const query = encodeURIComponent(searchTerms);
 
     // Use eBay's sold listings search
     const url = `https://www.ebay.com/sch/i.html?_nkw=${query}&LH_Complete=1&LH_Sold=1&_sop=13&_ipg=60`;

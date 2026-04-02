@@ -401,71 +401,100 @@ export function AddCardForm() {
               Market Pricing Preview
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {ebayMarketPrice && (
-              <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
-                <p className="text-green-500 font-semibold text-lg">
-                  eBay Market Price: ${ebayMarketPrice.toFixed(2)}
-                </p>
-                <p className="text-gray-400 text-sm">
-                  Based on {ebayListings.length} recent sold listings
-                </p>
-              </div>
-            )}
-
-            {/* eBay Sold */}
-            {ebayListings.length > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-gray-300 mb-2">
-                  eBay Sold ({ebayListings.length})
-                </h4>
-                <div className="space-y-1.5">
-                  {ebayListings.slice(0, 5).map((l, i) => (
-                    <div key={i} className="flex justify-between items-center text-sm bg-gray-800 rounded px-3 py-2">
-                      <span className="text-gray-300 truncate mr-4">{l.title}</span>
-                      <span className="text-green-400 font-mono whitespace-nowrap">
-                        ${l.price.toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
+          <CardContent className="space-y-6">
+            {/* GRADED VALUE SECTION */}
+            {(ebayListings.length > 0 || pcListings.length > 0) && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className="h-px flex-1 bg-green-500/30" />
+                  <span className="text-xs font-bold text-green-400 uppercase tracking-wider">
+                    {gradingCompany !== 'RAW' ? `${gradingCompany} ${grade} Graded Comps` : 'Raw Card Comps'}
+                  </span>
+                  <div className="h-px flex-1 bg-green-500/30" />
                 </div>
+
+                {ebayMarketPrice && (
+                  <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+                    <p className="text-green-500 font-semibold text-lg">
+                      eBay Graded Comp: ${ebayMarketPrice.toFixed(2)}
+                    </p>
+                    <p className="text-gray-400 text-sm">
+                      Based on {ebayListings.length} recent {gradingCompany !== 'RAW' ? `${gradingCompany} ${grade}` : 'raw'} sold listings
+                    </p>
+                  </div>
+                )}
+
+                {/* eBay Sold — Graded Comps */}
+                {ebayListings.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-green-500" />
+                      eBay Sold — {gradingCompany !== 'RAW' ? `${gradingCompany} ${grade}` : 'Raw'} ({ebayListings.length})
+                    </h4>
+                    <div className="space-y-1.5">
+                      {ebayListings.slice(0, 5).map((l, i) => (
+                        <div key={i} className="flex justify-between items-center text-sm bg-gray-800 rounded px-3 py-2">
+                          <span className="text-gray-300 truncate mr-4">{l.title}</span>
+                          <span className="text-green-400 font-mono whitespace-nowrap font-semibold">
+                            ${l.price.toFixed(2)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* PriceCharting */}
+                {pcListings.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-purple-500" />
+                      PriceCharting ({pcListings.length})
+                    </h4>
+                    <div className="space-y-1.5">
+                      {pcListings.slice(0, 5).map((l, i) => (
+                        <div key={i} className="flex justify-between items-center text-sm bg-gray-800 rounded px-3 py-2">
+                          <span className="text-gray-300 truncate mr-4">{l.title}</span>
+                          <span className="text-purple-400 font-mono whitespace-nowrap">
+                            ${l.price.toFixed(2)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* TCGPlayer */}
+            {/* RAW VALUE SECTION — TCGPlayer */}
             {tcgListings.length > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-gray-300 mb-2">
-                  TCGPlayer ({tcgListings.length})
-                </h4>
-                <div className="space-y-1.5">
-                  {tcgListings.slice(0, 5).map((l, i) => (
-                    <div key={i} className="flex justify-between items-center text-sm bg-gray-800 rounded px-3 py-2">
-                      <span className="text-gray-300 truncate mr-4">{l.title}</span>
-                      <span className="text-blue-400 font-mono whitespace-nowrap">
-                        ${l.price.toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <div className="h-px flex-1 bg-blue-500/30" />
+                  <span className="text-xs font-bold text-blue-400 uppercase tracking-wider">
+                    Raw (Ungraded) Value
+                  </span>
+                  <div className="h-px flex-1 bg-blue-500/30" />
                 </div>
-              </div>
-            )}
 
-            {/* PriceCharting */}
-            {pcListings.length > 0 && (
-              <div>
-                <h4 className="text-sm font-medium text-gray-300 mb-2">
-                  PriceCharting ({pcListings.length})
-                </h4>
-                <div className="space-y-1.5">
-                  {pcListings.slice(0, 5).map((l, i) => (
-                    <div key={i} className="flex justify-between items-center text-sm bg-gray-800 rounded px-3 py-2">
-                      <span className="text-gray-300 truncate mr-4">{l.title}</span>
-                      <span className="text-purple-400 font-mono whitespace-nowrap">
-                        ${l.price.toFixed(2)}
-                      </span>
-                    </div>
-                  ))}
+                <div>
+                  <h4 className="text-sm font-medium text-gray-300 mb-2 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-500" />
+                    TCGPlayer — Raw Singles ({tcgListings.length})
+                  </h4>
+                  <div className="space-y-1.5">
+                    {tcgListings.slice(0, 5).map((l, i) => (
+                      <div key={i} className="flex justify-between items-center text-sm bg-gray-800 rounded px-3 py-2">
+                        <span className="text-gray-300 truncate mr-4">{l.title}</span>
+                        <span className="text-blue-400 font-mono whitespace-nowrap">
+                          ${l.price.toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2 italic">
+                    TCGPlayer prices are for raw (ungraded) singles only
+                  </p>
                 </div>
               </div>
             )}

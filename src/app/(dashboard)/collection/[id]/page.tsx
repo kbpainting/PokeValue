@@ -172,75 +172,103 @@ export default async function CardDetailPage({
             </Card>
           )}
 
-          {/* Price Tabs */}
-          <Tabs defaultValue="ebay" className="w-full">
+          {/* Price Tabs — Graded vs Raw */}
+          <Tabs defaultValue="graded" className="w-full">
             <TabsList className="bg-gray-800 border border-gray-700">
-              <TabsTrigger value="ebay" className="data-[state=active]:bg-gray-700">
-                eBay ({ebayPrices.length})
+              <TabsTrigger value="graded" className="data-[state=active]:bg-green-500/20 data-[state=active]:text-green-400">
+                Graded Comps ({ebayPrices.length + pcPrices.length})
               </TabsTrigger>
-              <TabsTrigger value="tcg" className="data-[state=active]:bg-gray-700">
-                TCGPlayer ({tcgPrices.length})
-              </TabsTrigger>
-              <TabsTrigger value="pc" className="data-[state=active]:bg-gray-700">
-                PriceCharting ({pcPrices.length})
+              <TabsTrigger value="raw" className="data-[state=active]:bg-blue-500/20 data-[state=active]:text-blue-400">
+                Raw Value ({tcgPrices.length})
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="ebay" className="mt-4 space-y-2">
-              {ebayPrices.length === 0 ? (
-                <p className="text-gray-500 text-sm">No eBay data yet</p>
-              ) : (
-                ebayPrices.slice(0, 10).map((p) => (
-                  <div key={p.id} className="flex justify-between items-center bg-gray-800 rounded px-3 py-2 text-sm">
-                    <div className="flex-1 min-w-0 mr-4">
-                      <p className="text-gray-300 truncate">{p.listing_title}</p>
-                      <p className="text-gray-500 text-xs">{p.sale_date || 'N/A'}</p>
-                    </div>
-                    <span className="text-green-400 font-mono whitespace-nowrap">
-                      ${p.price.toFixed(2)}
-                    </span>
-                    {p.listing_url && (
-                      <a href={p.listing_url} target="_blank" rel="noopener noreferrer" className="ml-2 text-blue-400">
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
-                    )}
+            {/* GRADED COMPS TAB */}
+            <TabsContent value="graded" className="mt-4 space-y-4">
+              <p className="text-xs text-gray-500 italic">
+                Exact {card.grading_company} {card.grade || ''} sold comps from eBay &amp; PriceCharting
+              </p>
+
+              {/* eBay Graded Sold */}
+              {ebayPrices.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-green-400 mb-2">
+                    eBay Sold — {card.grading_company} {card.grade || ''} ({ebayPrices.length})
+                  </h4>
+                  <div className="space-y-1.5">
+                    {ebayPrices.slice(0, 10).map((p) => (
+                      <div key={p.id} className="flex justify-between items-center bg-gray-800 rounded px-3 py-2 text-sm">
+                        <div className="flex-1 min-w-0 mr-4">
+                          <p className="text-gray-300 truncate">{p.listing_title}</p>
+                          <p className="text-gray-500 text-xs">{p.sale_date || 'N/A'}</p>
+                        </div>
+                        <span className="text-green-400 font-mono whitespace-nowrap font-semibold">
+                          ${p.price.toFixed(2)}
+                        </span>
+                        {p.listing_url && (
+                          <a href={p.listing_url} target="_blank" rel="noopener noreferrer" className="ml-2 text-blue-400">
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))
+                </div>
+              )}
+
+              {/* PriceCharting */}
+              {pcPrices.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-purple-400 mb-2">
+                    PriceCharting ({pcPrices.length})
+                  </h4>
+                  <div className="space-y-1.5">
+                    {pcPrices.slice(0, 10).map((p) => (
+                      <div key={p.id} className="flex justify-between items-center bg-gray-800 rounded px-3 py-2 text-sm">
+                        <div className="flex-1 min-w-0 mr-4">
+                          <p className="text-gray-300 truncate">{p.listing_title}</p>
+                        </div>
+                        <span className="text-purple-400 font-mono">${p.price.toFixed(2)}</span>
+                        {p.listing_url && (
+                          <a href={p.listing_url} target="_blank" rel="noopener noreferrer" className="ml-2 text-blue-400">
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {ebayPrices.length === 0 && pcPrices.length === 0 && (
+                <p className="text-gray-500 text-sm py-4">No graded comp data yet. Prices are fetched when the card is added.</p>
               )}
             </TabsContent>
 
-            <TabsContent value="tcg" className="mt-4 space-y-2">
+            {/* RAW VALUE TAB */}
+            <TabsContent value="raw" className="mt-4 space-y-4">
+              <p className="text-xs text-gray-500 italic">
+                TCGPlayer prices are for raw (ungraded) singles only — not graded slabs
+              </p>
+
               {tcgPrices.length === 0 ? (
-                <p className="text-gray-500 text-sm">No TCGPlayer data yet</p>
+                <p className="text-gray-500 text-sm py-4">No TCGPlayer raw price data yet</p>
               ) : (
-                tcgPrices.slice(0, 10).map((p) => (
-                  <div key={p.id} className="flex justify-between items-center bg-gray-800 rounded px-3 py-2 text-sm">
-                    <div className="flex-1 min-w-0 mr-4">
-                      <p className="text-gray-300 truncate">{p.listing_title}</p>
-                    </div>
-                    <span className="text-blue-400 font-mono">${p.price.toFixed(2)}</span>
+                <div>
+                  <h4 className="text-sm font-medium text-blue-400 mb-2">
+                    TCGPlayer — Raw Singles ({tcgPrices.length})
+                  </h4>
+                  <div className="space-y-1.5">
+                    {tcgPrices.slice(0, 10).map((p) => (
+                      <div key={p.id} className="flex justify-between items-center bg-gray-800 rounded px-3 py-2 text-sm">
+                        <div className="flex-1 min-w-0 mr-4">
+                          <p className="text-gray-300 truncate">{p.listing_title}</p>
+                        </div>
+                        <span className="text-blue-400 font-mono">${p.price.toFixed(2)}</span>
+                      </div>
+                    ))}
                   </div>
-                ))
-              )}
-            </TabsContent>
-
-            <TabsContent value="pc" className="mt-4 space-y-2">
-              {pcPrices.length === 0 ? (
-                <p className="text-gray-500 text-sm">No PriceCharting data yet</p>
-              ) : (
-                pcPrices.slice(0, 10).map((p) => (
-                  <div key={p.id} className="flex justify-between items-center bg-gray-800 rounded px-3 py-2 text-sm">
-                    <div className="flex-1 min-w-0 mr-4">
-                      <p className="text-gray-300 truncate">{p.listing_title}</p>
-                    </div>
-                    <span className="text-purple-400 font-mono">${p.price.toFixed(2)}</span>
-                    {p.listing_url && (
-                      <a href={p.listing_url} target="_blank" rel="noopener noreferrer" className="ml-2 text-blue-400">
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </a>
-                    )}
-                  </div>
-                ))
+                </div>
               )}
             </TabsContent>
           </Tabs>

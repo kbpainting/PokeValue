@@ -30,6 +30,11 @@ export async function searchCards(query: string) {
   }
 }
 
+/**
+ * Gets RAW/ungraded card prices from TCGPlayer via the pokemontcg.io API.
+ * IMPORTANT: TCGPlayer only sells RAW (ungraded) cards. All prices returned
+ * here are for raw singles — NOT graded slabs.
+ */
 export async function getCardPrices(
   cardName: string,
   setName: string,
@@ -55,11 +60,27 @@ export async function getCardPrices(
     const listings: SoldListing[] = [];
     const now = new Date().toISOString().split('T')[0];
 
+    // Format variant names for display
+    const formatVariant = (variant: string): string => {
+      const map: Record<string, string> = {
+        normal: 'Normal',
+        holofoil: 'Holofoil',
+        reverseHolofoil: 'Reverse Holo',
+        '1stEditionHolofoil': '1st Ed. Holo',
+        '1stEditionNormal': '1st Ed. Normal',
+        unlimitedHolofoil: 'Unlimited Holo',
+      };
+      return map[variant] || variant.replace(/([A-Z])/g, ' $1').trim();
+    };
+
     for (const [variant, data] of Object.entries(prices)) {
       const p = data as TCGPriceData;
+      const variantLabel = formatVariant(variant);
+
+      // Market price is the most useful — show it first
       if (p.market) {
         listings.push({
-          title: `${match.name} (${variant}) - Market Price`,
+          title: `RAW ${variantLabel} — Market Price`,
           price: p.market,
           date: now,
           url: match.tcgplayer?.url || '',
@@ -68,7 +89,7 @@ export async function getCardPrices(
       }
       if (p.low) {
         listings.push({
-          title: `${match.name} (${variant}) - Low`,
+          title: `RAW ${variantLabel} — Low`,
           price: p.low,
           date: now,
           url: match.tcgplayer?.url || '',
@@ -77,7 +98,7 @@ export async function getCardPrices(
       }
       if (p.mid) {
         listings.push({
-          title: `${match.name} (${variant}) - Mid`,
+          title: `RAW ${variantLabel} — Mid`,
           price: p.mid,
           date: now,
           url: match.tcgplayer?.url || '',
@@ -86,7 +107,7 @@ export async function getCardPrices(
       }
       if (p.high) {
         listings.push({
-          title: `${match.name} (${variant}) - High`,
+          title: `RAW ${variantLabel} — High`,
           price: p.high,
           date: now,
           url: match.tcgplayer?.url || '',
