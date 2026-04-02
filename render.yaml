@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: pokevalue
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: PSA_API_TOKEN
+        sync: false
+      - key: NODE_ENV
+        value: production
