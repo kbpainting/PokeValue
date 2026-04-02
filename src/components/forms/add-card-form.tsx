@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -59,13 +59,16 @@ export function AddCardForm() {
   const [pcListings, setPcListings] = useState<SoldListing[]>([]);
   const [ebayMarketPrice, setEbayMarketPrice] = useState<number | null>(null);
 
-  // Search Pokemon TCG API
-  async function searchCards() {
-    if (!cardName.trim()) return;
+  // Debounced search — auto-searches 400ms after user stops typing
+  const searchTimer = useRef<NodeJS.Timeout | null>(null);
+
+  const searchCards = useCallback(async (query?: string) => {
+    const q = (query ?? cardName).trim();
+    if (!q || q.length < 2) return;
     setSearching(true);
     try {
       const res = await fetch(
-        `/api/pricing/tcgplayer?search=${encodeURIComponent(cardName)}`
+        `/api/pricing/tcgplayer?search=${encodeURIComponent(q)}`
       );
       const data = await res.json();
       setSearchResults(data.results || []);
@@ -73,6 +76,18 @@ export function AddCardForm() {
       toast.error('Search failed');
     } finally {
       setSearching(false);
+    }
+  }, [cardName]);
+
+  function handleCardNameChange(value: string) {
+    setCardName(value);
+    // Clear previous timer
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    // Auto-search after 400ms of no typing (if 3+ chars)
+    if (value.trim().length >= 3) {
+      searchTimer.current = setTimeout(() => searchCards(value), 400);
+    } else {
+      setSearchResults([]);
     }
   }
 
@@ -216,14 +231,14 @@ export function AddCardForm() {
           <div className="flex gap-2">
             <Input
               value={cardName}
-              onChange={(e) => setCardName(e.target.value)}
-              placeholder="Search Pokemon card name..."
+              onChange={(e) => handleCardNameChange(e.target.value)}
+              placeholder="Start typing a Pokemon card name..."
               className="bg-gray-800 border-gray-700 text-white"
               onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), searchCards())}
             />
             <Button
               type="button"
-              onClick={searchCards}
+              onClick={() => searchCards()}
               disabled={searching}
               variant="outline"
               className="border-gray-700"
