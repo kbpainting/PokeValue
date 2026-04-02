@@ -1,4 +1,5 @@
 import { PokemonTCG } from 'pokemon-tcg-sdk-typescript';
+import * as cheerio from 'cheerio';
 import type { SoldListing } from '@/types';
 
 interface TCGPriceData {
@@ -14,16 +15,13 @@ interface TCGPriceData {
  * Smart card search that handles natural queries like:
  *   "Pikachu 005"          → name:Pikachu number:005
  *   "Pikachu Celebrations"  → name:Pikachu set.name:Celebrations
- *   "Pikachu 005 Celebrations" → name:Pikachu number:005 set.name:Celebrations
  *   "Charizard VMAX"       → name:"Charizard VMAX"
- *   "Mewtwo 72"            → name:Mewtwo number:72
  */
 export async function searchCards(query: string) {
   try {
     const parts = query.trim().split(/\s+/);
     const qParts: string[] = [];
 
-    // Known set names for matching (common ones)
     const knownSets = [
       'celebrations', 'evolving skies', 'brilliant stars', 'astral radiance',
       'lost origin', 'silver tempest', 'crown zenith', 'scarlet & violet',
@@ -43,12 +41,10 @@ export async function searchCards(query: string) {
     let numberPart: string | null = null;
     let setPart: string | null = null;
 
-    // Parse the query: separate name, number, and set
     const lowerQuery = query.toLowerCase();
     for (const setName of knownSets) {
       if (lowerQuery.includes(setName)) {
         setPart = setName;
-        // Remove set name from parts to process
         const setRegex = new RegExp(setName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
         const remaining = query.replace(setRegex, '').trim();
         const remainingParts = remaining.split(/\s+/).filter(Boolean);
@@ -63,10 +59,8 @@ export async function searchCards(query: string) {
       }
     }
 
-    // If no set was found, parse normally
     if (!setPart) {
       for (const p of parts) {
-        // Check if this looks like a card number: "005", "72", "TG03", "12/100"
         if (/^\d{1,4}$/.test(p) || /^[A-Z]{1,3}\d{1,4}$/i.test(p) || /^\d+\/\d+$/.test(p)) {
           numberPart = p;
         } else {
@@ -75,31 +69,23 @@ export async function searchCards(query: string) {
       }
     }
 
-    // Build the API query
     if (nameParts.length > 0) {
-      const name = nameParts.join(' ');
-      qParts.push(`name:"${name}"`);
+      qParts.push(`name:"${nameParts.join(' ')}"`);
     }
     if (numberPart) {
-      // Strip leading zeros for matching but also try with them
       qParts.push(`number:${numberPart}`);
     }
     if (setPart) {
       qParts.push(`set.name:"${setPart}"`);
     }
-
-    // If we only got a number with no name, that's not useful
     if (nameParts.length === 0) {
       qParts.length = 0;
       qParts.push(`name:"${query}"`);
     }
 
     const q = qParts.join(' ');
-    console.log('[TCG Search]', query, '→', q);
-
     let results: any[] = await PokemonTCG.findCardsByQueries({ q, pageSize: 50 });
 
-    // If exact number match found nothing, retry with just name (broader search)
     if (results.length === 0 && numberPart && nameParts.length > 0) {
       const fallbackQ = `name:"${nameParts.join(' ')}"`;
       results = await PokemonTCG.findCardsByQueries({ q: fallbackQ, pageSize: 50 });
@@ -124,9 +110,98 @@ export async function searchCards(query: string) {
 }
 
 /**
- * Gets RAW/ungraded card prices from TCGPlayer via the pokemontcg.io API.
- * IMPORTANT: TCGPlayer only sells RAW (ungraded) cards. All prices returned
- * here are for raw singles — NOT graded slabs.
+ * Scrapes the TCGPlayer product page to get condition-level pricing.
+ * Returns prices for Near Mint, Lightly Played, Moderately Played, Heavily Played, Damaged.
+ */
+async function scrapeTCGPlayerConditionPrices(tcgPlayerUrl: string): Promise<SoldListing[]> {
+  if (!tcgPlayerUrl) return [];
+
+  try {
+    const response = await fetch(tcgPlayerUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      redirect: 'follow',
+    });
+
+    if (!response.ok) return [];
+
+    const html = await response.text();
+    const $ = cheerio.load(html);
+    const listings: SoldListing[] = [];
+    const now = new Date().toISOString().split('T')[0];
+    const url = response.url || tcgPlayerUrl;
+
+    // TCGPlayer condition pricing table rows
+    // Look for price listings by condition
+    $('section.price-points tr, .price-point, [class*="price-point"], [class*="condition"]').each((_, el) => {
+      const text = $(el).text();
+      const conditionMatch = text.match(/(Near Mint|Lightly Played|Moderately Played|Heavily Played|Damaged)/i);
+      if (!conditionMatch) return;
+
+      const priceMatch = text.match(/\$[\d,]+\.?\d*/);
+      if (!priceMatch) return;
+
+      const price = parseFloat(priceMatch[0].replace(/[$,]/g, ''));
+      if (isNaN(price) || price <= 0) return;
+
+      listings.push({
+        title: `RAW — ${conditionMatch[1]}`,
+        price,
+        date: now,
+        url,
+        source: 'TCGPLAYER',
+      });
+    });
+
+    // Also try JSON-LD or script data that TCGPlayer embeds
+    $('script[type="application/ld+json"]').each((_, el) => {
+      try {
+        const json = JSON.parse($(el).html() || '');
+        if (json.offers) {
+          const offers = Array.isArray(json.offers) ? json.offers : [json.offers];
+          for (const offer of offers) {
+            if (offer.price && offer.itemCondition) {
+              const conditionMap: Record<string, string> = {
+                'https://schema.org/NewCondition': 'Near Mint',
+                'https://schema.org/UsedCondition': 'Lightly Played',
+                'NewCondition': 'Near Mint',
+                'UsedCondition': 'Lightly Played',
+              };
+              const condition = conditionMap[offer.itemCondition] || offer.itemCondition;
+              listings.push({
+                title: `RAW — ${condition}`,
+                price: parseFloat(offer.price),
+                date: now,
+                url,
+                source: 'TCGPLAYER',
+              });
+            }
+          }
+        }
+      } catch {
+        // ignore JSON parse errors
+      }
+    });
+
+    return listings;
+  } catch (error) {
+    console.error('TCGPlayer scrape error:', error);
+    return [];
+  }
+}
+
+/**
+ * Gets RAW/ungraded card prices from TCGPlayer.
+ *
+ * Strategy:
+ * 1. Use pokemontcg.io API to find the card and get its TCGPlayer URL + base prices
+ * 2. Try scraping the TCGPlayer product page for condition-level pricing (NM, LP, MP, HP)
+ * 3. Fall back to API data if scraping fails
+ *
+ * IMPORTANT: TCGPlayer only sells RAW (ungraded) cards. All prices are for raw singles.
  */
 export async function getCardPrices(
   cardName: string,
@@ -140,20 +215,28 @@ export async function getCardPrices(
 
     const results: any[] = await PokemonTCG.findCardsByQueries({ q });
 
-    // Find best match by set name
     let match = results.find(
       (c: any) => c.set?.name?.toLowerCase() === setName.toLowerCase()
     );
     if (!match && results.length > 0) match = results[0];
     if (!match) return [];
 
+    const tcgUrl = match.tcgplayer?.url || '';
+
+    // Try to get condition-level pricing from TCGPlayer page
+    const conditionPrices = await scrapeTCGPlayerConditionPrices(tcgUrl);
+
+    if (conditionPrices.length > 0) {
+      return conditionPrices.slice(0, 10);
+    }
+
+    // Fallback: use API data with condition labels based on price tiers
     const prices = match.tcgplayer?.prices;
     if (!prices) return [];
 
     const listings: SoldListing[] = [];
     const now = new Date().toISOString().split('T')[0];
 
-    // Format variant names for display
     const formatVariant = (variant: string): string => {
       const map: Record<string, string> = {
         normal: 'Normal',
@@ -170,40 +253,41 @@ export async function getCardPrices(
       const p = data as TCGPriceData;
       const variantLabel = formatVariant(variant);
 
-      // Market price is the most useful — show it first
+      // Map API price tiers to approximate condition labels:
+      // market ≈ Near Mint, mid ≈ Lightly Played, low ≈ Moderately/Heavily Played
       if (p.market) {
         listings.push({
-          title: `RAW ${variantLabel} — Market Price`,
+          title: `RAW ${variantLabel} — Near Mint (Market)`,
           price: p.market,
           date: now,
-          url: match.tcgplayer?.url || '',
+          url: tcgUrl,
           source: 'TCGPLAYER',
         });
       }
-      if (p.low) {
+      if (p.mid && p.mid !== p.market) {
         listings.push({
-          title: `RAW ${variantLabel} — Low`,
-          price: p.low,
-          date: now,
-          url: match.tcgplayer?.url || '',
-          source: 'TCGPLAYER',
-        });
-      }
-      if (p.mid) {
-        listings.push({
-          title: `RAW ${variantLabel} — Mid`,
+          title: `RAW ${variantLabel} — Lightly Played (Mid)`,
           price: p.mid,
           date: now,
-          url: match.tcgplayer?.url || '',
+          url: tcgUrl,
+          source: 'TCGPLAYER',
+        });
+      }
+      if (p.low && p.low !== p.mid) {
+        listings.push({
+          title: `RAW ${variantLabel} — Moderately Played (Low)`,
+          price: p.low,
+          date: now,
+          url: tcgUrl,
           source: 'TCGPLAYER',
         });
       }
       if (p.high) {
         listings.push({
-          title: `RAW ${variantLabel} — High`,
+          title: `RAW ${variantLabel} — Near Mint (High)`,
           price: p.high,
           date: now,
-          url: match.tcgplayer?.url || '',
+          url: tcgUrl,
           source: 'TCGPLAYER',
         });
       }
